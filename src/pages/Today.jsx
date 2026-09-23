@@ -40,11 +40,11 @@ export default function Today({ data, run, open, navigate }) {
       <div className="brief-actions"><Button onClick={() => open('task')}>＋ 添加任务</Button>{data.runtime?.codex_available && tasks.length > 0 && <Button onClick={() => run('generate_brief', {})}>生成 AI 建议</Button>}<Button variant="primary" onClick={() => run('confirm_plan', { task_ids: ordered })}>确认今日计划</Button></div>
     </Panel> : <Panel className="work-panel feature-panel" title={mode === 'review' ? '今日回顾' : '今日任务'} action={<span className="overline">{done} / {todayTasks.length} 已完成</span>}>
       <div className="progress-track"><span style={{ width: `${todayTasks.length ? done / todayTasks.length * 100 : 0}%` }} /></div>
-      {todayTasks.length ? todayTasks.map(task => <div className="work-row" key={task.id}>
+      <div className="work-list">{todayTasks.length ? todayTasks.map(task => <div className="work-row" key={task.id}>
         <span className={`task-ring ${task.status === 'Done' ? 'checked' : ''}`}>{task.status === 'Done' ? '✓' : ''}</span>
         <div><strong>{task.title}</strong><small>{data.projects.find(project => project.id === task.project_id)?.name || '无项目'} · {STATUS[task.status]}</small></div>
         {task.executor_type === 'self' && task.status !== 'Done' ? <Button onClick={() => run('complete_task', { id: task.id })}>完成</Button> : <Button onClick={() => navigate('tasks', task.id)}>查看</Button>}
-      </div>) : <Empty title="计划已确认" detail="继续添加任务并在任务页安排今天。" action={<Button onClick={() => open('task')}>添加任务</Button>} />}
+      </div>) : <Empty title="计划已确认" detail="继续添加任务并在任务页安排今天。" action={<Button onClick={() => open('task')}>添加任务</Button>} />}</div>
       <div className="brief-actions"><Button onClick={() => navigate('tasks')}>查看全部任务 →</Button><Button variant="primary" onClick={() => log ? navigate('history') : run('draft_log', {})}> {log ? '查看今日日报' : '生成今日日报'}</Button></div>
     </Panel>}
     <div className="today-grid">
