@@ -1,0 +1,167 @@
+import React, { useEffect, useMemo, useState } from 'react'
+import { action, loadState } from './api.js'
+import { Button, Field, Modal, NAV } from './ui.jsx'
+import Today from './pages/Today.jsx'
+import Tasks from './pages/Tasks.jsx'
+import Projects from './pages/Projects.jsx'
+import Intelligence from './pages/Intelligence.jsx'
+import Review from './pages/Review.jsx'
+import History from './pages/History.jsx'
+import Settings from './pages/Settings.jsx'
+
+function themeByTime() {
+  const hour = new Date().getHours()
+  return hour >= 10 && hour < 14 ? 'morning' : hour >= 14 && hour < 20 ? 'afternoon' : 'night'
+}
+
+function initialPage() {
+  const key = window.location.hash.slice(1).split('/')[0]
+  return NAV.some(item => item[0] === key) ? key : 'today'
+}
+
+const pageTitles = {
+  today: '早上好', tasks: '任务', projects: '项目', intelligence: '情报',
+  review: '审核', history: '历史', settings: '设置',
+}
+
+function greeting() {
+  const hour = new Date().getHours()
+  return hour >= 6 && hour < 12 ? '早上好' : hour >= 12 && hour < 18 ? '下午好' : '晚上好'
+}
+
+function useClock() {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id) }, [])
+  return now
+}
+
+function FormModal({ modal, data, run, close }) {
+  const item = modal.value || {}
+  const kind = modal.kind
+  const editing = kind.endsWith('-edit')
+  const names = {
+    task: '新建任务', 'task-edit': '编辑任务', project: '新建项目', 'project-edit': '编辑项目',
+    decision: '记录决策', 'decision-edit': '编辑决策', pulse: '编辑项目脉搏',
+    'log-edit': '修改日报', channel: '新建频道', 'channel-edit': '编辑频道', intelligence: '添加情报',
+    rule: '新建规则', 'rule-edit': '编辑规则', knowledge: '提出知识沉淀',
+    'knowledge-edit': '修改并写入 Obsidian', 'agent-revision': '要求 Agent 继续修改',
+  }
+
+  async function submit(event) {
+    event.preventDefault()
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries())
+    let operation
+    let payload = values
+    if (kind === 'task' || kind === 'task-edit') {
+      operation = editing ? 'update_task' : 'create_task'
+      payload = { ...values, project_id: values.project_id || null, deadline: values.deadline || null, ...(editing ? { id: item.id } : {}) }
+    } else if (kind === 'project' || kind === 'project-edit') {
+      operation = editing ? 'update_project' : 'create_project'
+      if (editing) payload.id = item.id
+    } else if (kind === 'decision' || kind === 'decision-edit') {
+      operation = editing ? 'update_decision' : 'create_decision'
+      if (editing) payload.id = item.id
+      if (!payload.project_id) delete payload.project_id
+    } else if (kind === 'pulse') {
+      operation = 'update_project'; payload = { id: item.id, pulse: values.pulse }
+    } else if (kind === 'log-edit') {
+      operation = 'update_log'; payload.id = item.id
+    } else if (kind === 'channel' || kind === 'channel-edit') {
+      operation = editing ? 'update_channel' : 'create_channel'; if (editing) payload.id = item.id
+    } else if (kind === 'intelligence') {
+      operation = 'create_intelligence'; payload.project_id ||= null
+    } else if (kind === 'rule' || kind === 'rule-edit') {
+      operation = editing ? 'update_rule' : 'create_rule'; if (editing) payload.id = item.id
+    } else if (kind === 'knowledge') {
+      operation = 'propose_knowledge'; payload.task_id = item.id
+    } else if (kind === 'knowledge-edit') {
+      operation = 'approve_knowledge'; payload = { ...values, id: item.id, choice: 'write' }
+    } else if (kind === 'agent-revision') {
+      operation = 'review_agent'; payload = { task_id: item.id, choice: 'revise', instruction: values.instruction }
+    }
+    const result = await run(operation, payload)
+    if (result) close()
+  }
+
+  return <Modal title={names[kind] || kind} onClose={close}><form onSubmit={submit} className="form-grid">
+    {(kind === 'task' || kind === 'task-edit') && <>
+      <Field label="任务标题"><input name="title" defaultValue={item.title || ''} required autoFocus maxLength={200} /></Field>
+      <Field label="描述与完成标准"><textarea name="description" defaultValue={item.description || ''} rows={4} /></Field>
+      <div className="form-columns"><Field label="所属项目"><select name="project_id" defaultValue={item.project_id || ''}><option value="">无项目</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field><Field label="优先级"><select name="priority" defaultValue={item.priority || 'Medium'}><option value="High">高</option><option value="Medium">中</option><option value="Low">低</option></select></Field></div>
+      <div className="form-columns"><Field label="截止日期"><input type="date" name="deadline" defaultValue={item.deadline || ''} /></Field><Field label="执行方式"><select name="executor_type" defaultValue={item.executor_type || 'self'}><option value="self">我自己</option><option value="agent">Agent</option></select></Field></div>
+      {!editing && <input type="hidden" name="source" value={item.source || 'Manual'} />}
+    </>}
+    {(kind === 'project' || kind === 'project-edit') && <><Field label="项目名称"><input name="name" defaultValue={item.name || ''} required autoFocus /></Field><Field label="项目说明"><textarea name="description" rows={3} defaultValue={item.description || ''} /></Field><Field label="当前阶段"><input name="stage" defaultValue={item.stage || '规划中'} /></Field>{editing && <Field label="状态"><select name="status" defaultValue={item.status}><option value="Active">进行中</option><option value="Paused">已暂停</option><option value="Completed">已完成</option></select></Field>}<Field label="本地工作目录（用于 Codex 执行，可选）"><input name="workspace_path" defaultValue={item.workspace_path || ''} placeholder="/path/to/repository" /></Field></>}
+    {(kind === 'decision' || kind === 'decision-edit') && <><Field label="决策标题"><input name="title" defaultValue={item.title || ''} required autoFocus /></Field><Field label="决定内容"><textarea name="content" rows={4} defaultValue={item.content || ''} required /></Field><Field label="原因"><textarea name="reason" rows={2} defaultValue={item.reason || ''} /></Field>{!editing && <Field label="所属项目"><select name="project_id" defaultValue={item.project_id || ''}><option value="">无项目</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>}{editing && <Field label="状态"><select name="status" defaultValue={item.status}><option value="Active">有效</option><option value="Superseded">已替代</option><option value="Archived">已归档</option></select></Field>}</>}
+    {kind === 'pulse' && <Field label="项目脉搏"><textarea name="pulse" rows={6} defaultValue={item.pulse || ''} required autoFocus /></Field>}
+    {kind === 'log-edit' && <Field label="今日工作记录"><textarea name="summary" rows={12} defaultValue={item.summary} required autoFocus /></Field>}
+    {(kind === 'channel' || kind === 'channel-edit') && <><Field label="频道名称"><input name="name" defaultValue={item.name || ''} required autoFocus /></Field><Field label="关注边界（关键词）"><textarea name="boundary" rows={3} defaultValue={item.boundary || ''} placeholder="例如：Coding Agent、模型发布、重要论文" /></Field><Field label="RSS/Atom 来源（每行一个网址）"><textarea name="sources" rows={3} defaultValue={item.sources || ''} placeholder="https://example.com/feed.xml" /></Field><Field label="排除关键词"><textarea name="filter_rule" rows={2} defaultValue={item.filter_rule || ''} placeholder="例如：营销文章、广告" /></Field><Field label="每日最多条数"><input name="daily_limit" type="number" min="1" max="50" defaultValue={item.daily_limit || 8} /></Field></>}
+    {kind === 'intelligence' && <><Field label="标题"><input name="title" required autoFocus /></Field><div className="form-columns"><Field label="频道"><select name="channel_id" required><option value="">选择频道</option>{data.intelligence_channels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></Field><Field label="来源"><input name="source" required /></Field></div><Field label="来源链接"><input name="url" type="url" placeholder="https://" /></Field><Field label="摘要"><textarea name="summary" rows={3} /></Field><Field label="为什么与你有关"><textarea name="why_recommended" rows={3} required /></Field><Field label="关联项目"><select name="project_id"><option value="">无项目</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field></>}
+    {(kind === 'rule' || kind === 'rule-edit') && <><Field label="规则内容"><textarea name="text" rows={3} defaultValue={item.text || ''} required autoFocus /></Field>{!editing && <Field label="类别"><select name="category"><option value="Daily Log">Daily Log</option><option value="Agent">Agent</option><option value="Intelligence">Intelligence</option><option value="General">General</option></select></Field>}{editing && <Button type="button" variant="danger" onClick={async () => { if (window.confirm('删除这条规则？')) { const result = await run('delete_rule', { id: item.id }); if (result) close() } }}>删除规则</Button>}</>}
+    {kind === 'knowledge' && <><Field label="知识标题"><input name="title" defaultValue={item.title || ''} required autoFocus /></Field><Field label="拟保存内容"><textarea name="content" rows={8} defaultValue={item.result || item.description || ''} required /></Field></>}
+    {kind === 'knowledge-edit' && <><Field label="知识标题"><input name="title" defaultValue={item.title} required autoFocus /></Field><Field label="写入内容"><textarea name="content" rows={10} defaultValue={item.content} required /></Field></>}
+    {kind === 'agent-revision' && <Field label="修改要求"><textarea name="instruction" rows={6} required autoFocus placeholder="说明需要修改的具体内容" /></Field>}
+    <div className="modal-actions"><Button type="button" onClick={close}>取消</Button><Button type="submit" variant="primary">{kind === 'knowledge-edit' ? '确认写入' : editing ? '保存修改' : '确认'}</Button></div>
+  </form></Modal>
+}
+
+export default function App() {
+  const [data, setData] = useState(null)
+  const [page, setPage] = useState(initialPage)
+  const [focus, setFocus] = useState(null)
+  const [modal, setModal] = useState(null)
+  const [search, setSearch] = useState('')
+  const [notice, setNotice] = useState(null)
+  const [pending, setPending] = useState(null)
+  const [loading, setLoading] = useState(true)
+  useClock()
+  useEffect(() => { loadState().then(setData).catch(error => setNotice({ error: error.message })).finally(() => setLoading(false)) }, [])
+  useEffect(() => { const id = setInterval(() => loadState().then(setData).catch(() => {}), data?.agent_runs?.some(item => item.status === 'Running') ? 8000 : 30000); return () => clearInterval(id) }, [data?.agent_runs?.some(item => item.status === 'Running')])
+  useEffect(() => { const handler = () => { setPage(initialPage()); setFocus(window.location.hash.split('/')[1] || null) }; window.addEventListener('hashchange', handler); return () => window.removeEventListener('hashchange', handler) }, [])
+  useEffect(() => { const handler = event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); document.getElementById('global-command')?.focus() } if (event.key === 'Escape') { setModal(null); setSearch('') } }; window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler) }, [])
+  const settings = data?.settings || { theme_mode: 'auto', manual_theme: 'morning', nickname: '博士' }
+  const theme = settings.theme_mode === 'manual' ? settings.manual_theme : themeByTime()
+  const nickname = settings.nickname?.trim()
+
+  function navigate(next, id = null) { setPage(next); setFocus(id); window.location.hash = id ? `${next}/${id}` : next; setSearch('') }
+  function open(kind, value) { setModal({ kind, value }); setSearch('') }
+  async function run(name, payload) {
+    setPending(name)
+    try {
+      const response = await action(name, payload)
+      setData(response.state)
+      setNotice({ message: '已保存' })
+      setTimeout(() => setNotice(null), 3000)
+      return response.result
+    } catch (error) {
+      setNotice({ error: error.message })
+      return null
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const matches = useMemo(() => !search.trim() || !data ? [] : [
+    ...data.tasks.filter(item => item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'tasks', label: '任务' })),
+    ...data.projects.filter(item => item.name.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'projects', title: item.name, label: '项目' })),
+  ], [search, data])
+
+  return <div className={`app-shell theme-${theme}`}>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark">♆</div><div><strong>Personal OS</strong><small>ABYSS CALLS · BUT ALSO HEALS</small></div></div><nav aria-label="主导航">{NAV.map(([key, icon, label, english], index) => <button key={key} className={`nav-item ${page === key ? 'active' : ''} ${index === 6 ? 'settings-nav' : ''}`} onClick={() => navigate(key)}><span className="nav-icon">{icon}</span><span>{label}<small>{english}</small></span></button>)}</nav><div className="sidebar-quote"><span>✧</span><p>在混沌中，仍然前行。</p><small>PERSONAL OS · A MORE FOCUSED YOU</small></div></aside>
+    <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索任务、项目、历史，或创建任务…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
+      <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1><p>{page === 'today' ? '今天值得推进的事，正在这里等你确认。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
+      <main className="content">{loading ? <div className="loading">正在读取工作空间…</div> : !data ? <div className="loading">无法连接本地服务。请启动 Python API。</div> : <>
+        {page === 'today' && <Today data={data} run={run} open={open} navigate={navigate} />}
+        {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}
+        {page === 'projects' && <Projects data={data} run={run} open={open} focus={focus} navigate={navigate} />}
+        {page === 'intelligence' && <Intelligence data={data} run={run} open={open} focus={focus} />}
+        {page === 'review' && <Review data={data} run={run} open={open} focus={focus} />}
+        {page === 'history' && <History data={data} run={run} open={open} />}
+        {page === 'settings' && <Settings data={data} run={run} open={open} theme={theme} />}
+      </>}</main>
+    </div>
+    {notice && <div className={`toast ${notice.error ? 'error' : ''}`} role="status">{notice.error || notice.message}<button onClick={() => setNotice(null)} aria-label="关闭通知">×</button></div>}
+    {pending && <div className="pending-indicator" role="status">{['generate_brief','generate_project_pulse','summarize_log'].includes(pending) ? '正在整理上下文并生成内容…' : pending === 'refresh_channel' ? '正在读取频道来源…' : '正在保存…'}</div>}
+    {modal && data && <FormModal modal={modal} data={data} run={run} close={() => setModal(null)} />}
+  </div>
+}
