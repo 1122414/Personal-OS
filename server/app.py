@@ -6,6 +6,9 @@ import argparse
 import json
 import mimetypes
 import os
+import signal
+import sqlite3
+import tempfile
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +20,25 @@ from .store import Store, local_day
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_BODY_BYTES = 1_000_000
+
+
+def migrate_legacy_database(source: Path, target: Path) -> bool:
+    """Copy the web MVP database once, using SQLite backup even if it is open."""
+    if target.exists() or not source.is_file() or source.resolve() == target.resolve():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix="personal-os-migrate-", suffix=".sqlite3", dir=target.parent, delete=False) as temporary:
+        pending = Path(temporary.name)
+    try:
+        with sqlite3.connect(source) as old, sqlite3.connect(pending) as new:
+            old.backup(new)
+        try:
+            os.link(pending, target)
+        except FileExistsError:
+            return False
+    finally:
+        pending.unlink(missing_ok=True)
+    return True
 
 
 def make_handler(store: Store, static_root: Path):
@@ -156,23 +178,36 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--db", default=os.environ.get("PERSONAL_OS_DB", str(ROOT / "data" / "personal-os.sqlite3")))
+    parser.add_argument("--ready-file", default="")
+    parser.add_argument("--migrate-from", default="")
     args = parser.parse_args()
+    if args.migrate_from:
+        migrate_legacy_database(Path(args.migrate_from), Path(args.db))
     store = Store(args.db)
     vault = os.environ.get("PERSONAL_OS_OBSIDIAN_VAULT", "")
     if vault and not store.get("settings", "settings").get("obsidian_vault"):
         store.action("save_settings", {"obsidian_vault": vault})
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(store, ROOT / "dist"))
+    port = server.server_address[1]
+    ready_file = Path(args.ready_file) if args.ready_file else None
+    if ready_file:
+        ready_file.write_text(str(port), encoding="ascii")
     stop = threading.Event()
     if os.environ.get("PERSONAL_OS_DISABLE_AUTOMATION") != "1":
         worker = threading.Thread(target=daily_automation, args=(store, stop), daemon=True)
         worker.start()
-    print(f"Personal OS API running on http://127.0.0.1:{args.port}", flush=True)
+    def request_shutdown(_signum, _frame):
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    signal.signal(signal.SIGTERM, request_shutdown)
+    print(f"Personal OS API running on http://127.0.0.1:{port}", flush=True)
     try:
         server.serve_forever()
     finally:
         stop.set()
         server.server_close()
         store.close()
+        if ready_file:
+            ready_file.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

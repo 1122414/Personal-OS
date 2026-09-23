@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -108,6 +109,44 @@ class StoreTests(unittest.TestCase):
         self.store.action("review_agent", {"task_id": task["id"], "choice": "approve"})
         self.assertEqual(self.store.get("task", task["id"])["status"], "Done")
         self.assertEqual(self.store.get("artifact", artifact["id"])["status"], "Approved")
+
+    def test_closing_client_interrupts_running_agent_and_blocks_task(self):
+        workspace = Path(self.temp.name) / "workspace"
+        workspace.mkdir()
+        project = self.store.action("create_project", {"name": "项目"})
+        self.store.action("update_project", {"id": project["id"], "workspace_path": str(workspace)})
+        task = self.store.action("create_task", {"title": "执行中任务", "project_id": project["id"], "executor_type": "agent"})
+        started = threading.Event()
+        stopped = threading.Event()
+
+        class WaitingProcess:
+            returncode = None
+
+            def __init__(self, _command, **_kwargs):
+                started.set()
+
+            def communicate(self, _prompt, timeout):
+                if not stopped.wait(timeout):
+                    raise AssertionError("未收到关闭信号")
+                self.returncode = -15
+                return "", ""
+
+            def poll(self):
+                return self.returncode
+
+            def terminate(self):
+                stopped.set()
+
+            def kill(self):
+                stopped.set()
+
+        with patch("server.store.shutil.which", return_value="/fake/codex"), patch("server.store.subprocess.Popen", WaitingProcess):
+            self.store.action("start_agent", {"task_id": task["id"]})
+            self.assertTrue(started.wait(2))
+            self.store.close()
+        self.store = Store(self.path)
+        self.assertEqual(self.store.get("task", task["id"])["status"], "Blocked")
+        self.assertEqual(self.store.all("agent_run")[0]["status"], "Interrupted")
 
     def test_obsidian_changes_are_evidence_not_automatic_completion(self):
         vault = Path(self.temp.name) / "vault"

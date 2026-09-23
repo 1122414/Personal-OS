@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 
-from server.app import make_handler
+from server.app import make_handler, migrate_legacy_database
+from server.store import Store
 
 
 class LocalRequestTests(unittest.TestCase):
@@ -32,3 +34,20 @@ class LocalRequestTests(unittest.TestCase):
     def test_dns_rebinding_host_is_rejected(self):
         self.handler.headers = {"Host": "example.com:8765"}
         self.assertFalse(self.handler._local_request())
+
+
+class MigrationTests(unittest.TestCase):
+    def test_backup_preserves_existing_data_and_never_overwrites_target(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "old.sqlite3"
+            target = Path(folder) / "application-support" / "personal-os.sqlite3"
+            original = Store(source)
+            original.action("create_task", {"title": "原有任务"})
+            self.assertTrue(migrate_legacy_database(source, target))
+            migrated = Store(target)
+            self.assertEqual(migrated.all("task")[0]["title"], "原有任务")
+            migrated.action("create_task", {"title": "客户端任务"})
+            self.assertFalse(migrate_legacy_database(source, target))
+            self.assertEqual(len(migrated.all("task")), 2)
+            migrated.close()
+            original.close()

@@ -86,11 +86,41 @@ class Store:
         if not self.get("settings", "settings"):
             self.put("settings", {"id": "settings", **DEFAULT_SETTINGS})
         self._processes: dict[str, subprocess.Popen] = {}
+        self._workers: dict[str, threading.Thread] = {}
+        self._stopping = False
         self._recover_interrupted_runs()
 
-    @synchronized
     def close(self) -> None:
-        self.db.close()
+        with self.lock:
+            self._stopping = True
+            for run in self.all("agent_run"):
+                if run.get("status") != "Running":
+                    continue
+                process = self._processes.get(run["id"])
+                if process and process.poll() is None:
+                    process.terminate()
+                run["status"] = "Interrupted"
+                run["error"] = "客户端已关闭，执行中断。请检查工作目录后重试。"
+                run["finished_at"] = stamp()
+                self.put("agent_run", run)
+                task = self.get("task", run["task_id"])
+                if task and task["status"] == "Running":
+                    task["status"] = "Blocked"
+                    self.put("task", task)
+                self.event("AgentRunInterrupted", "agent_run", run["id"], task.get("project_id") if task else None)
+            workers = list(self._workers.values())
+        for worker in workers:
+            worker.join(timeout=5)
+        with self.lock:
+            processes = list(self._processes.values())
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+        for worker in workers:
+            if worker.is_alive():
+                worker.join(timeout=5)
+        with self.lock:
+            self.db.close()
 
     @synchronized
     def get(self, kind: str, object_id: str) -> dict[str, Any] | None:
@@ -649,6 +679,8 @@ class Store:
         return {"configured": True, "changes": count}
 
     def start_agent(self, p: dict[str, Any]) -> dict[str, Any]:
+        if self._stopping:
+            raise ValueError("服务正在关闭")
         task = self.get("task", p.get("task_id") or "")
         if not task:
             raise ValueError("任务不存在")
@@ -678,6 +710,7 @@ class Store:
         self.event("AgentRunStarted", "agent_run", run["id"], task.get("project_id"), {"title": task["title"], "agent": "Codex"})
         before = self._workspace_snapshot(workspace)
         worker = threading.Thread(target=self._run_codex, args=(run["id"], prompt, before), daemon=True)
+        self._workers[run["id"]] = worker
         worker.start()
         return run
 
@@ -706,7 +739,7 @@ class Store:
     def _run_codex(self, run_id: str, prompt: str, before: dict[str, tuple[int, int]]) -> None:
         with self.lock:
             run = self.get("agent_run", run_id)
-        if not run:
+        if not run or run["status"] != "Running" or self._stopping:
             return
         output_path = self.path.parent / f"agent-{run_id}.txt"
         cmd = ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "workspace-write", "-C", run["workspace_path"], "-o", str(output_path), "-"]
@@ -714,6 +747,8 @@ class Store:
             process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             with self.lock:
                 self._processes[run_id] = process
+                if self._stopping or self.get("agent_run", run_id)["status"] != "Running":
+                    process.terminate()
             stdout, stderr = process.communicate(prompt, timeout=3600)
             result = output_path.read_text(encoding="utf-8") if output_path.exists() else stdout
             error = "" if process.returncode == 0 else (stderr[-4000:] or "Codex 执行失败")
@@ -728,6 +763,7 @@ class Store:
             output_path.unlink(missing_ok=True)
         with self.lock:
             self._processes.pop(run_id, None)
+            self._workers.pop(run_id, None)
             run = self.get("agent_run", run_id)
             if not run or run["status"] != "Running":
                 return
