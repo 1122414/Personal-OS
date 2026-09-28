@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -148,6 +149,52 @@ class RepairTests(unittest.TestCase):
         self.store.action("complete_task", {"id": a["id"]})
         with self.assertRaises(ValueError):
             self.store.action("revise_plan", {"task_ids": []})
+
+    def test_restart_recovers_running_and_canceled_evidence_once(self):
+        workspace = self.root / "workspace"
+        workspace.mkdir()
+        task = self.task()
+        for status in ("Running", "Canceled"):
+            self.store.put("agent_run", {"task_id": task["id"], "status": status, "workspace_path": str(workspace), "before_snapshot": {}})
+        (workspace / "partial.txt").write_text("unreviewed")
+        self.store.put("task", {**task, "status": "Running"})
+        self.store.close()
+        self.store = Store(self.root / "test.sqlite3")
+        self.assertEqual(self.store.get("task", task["id"])["status"], "Blocked")
+        artifacts = self.store.all("artifact")
+        self.assertEqual(len(artifacts), 2)
+        self.assertTrue(all(item["recovered"] for item in artifacts))
+        self.store._recover_interrupted_runs()
+        self.assertEqual(len(self.store.all("artifact")), 2)
+
+    def test_timeout_keeps_partial_file_evidence(self):
+        workspace = self.root / "timeout"
+        workspace.mkdir()
+        project = self.store.action("create_project", {"name": "timeout", "workspace_path": str(workspace)})
+        task = self.task(project_id=project["id"], executor_type="agent")
+
+        class Process:
+            returncode = None
+
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def communicate(self, prompt=None, timeout=None):
+                if timeout:
+                    (workspace / "partial.txt").write_text("partial")
+                    raise subprocess.TimeoutExpired("codex", timeout)
+                return "", ""
+
+            def kill(self):
+                self.returncode = -9
+
+        with patch("server.store.shutil.which", return_value="codex"), patch("server.store.subprocess.Popen", Process):
+            run = self.store.action("start_agent", {"task_id": task["id"]})
+            worker = self.store._workers.get(run["id"])
+            if worker:
+                worker.join(3)
+        self.assertEqual(self.store.get("agent_run", run["id"])["error"], "Codex 执行超时")
+        self.assertEqual(self.store.all("artifact")[0]["name"], "partial.txt")
 
     def test_feed_preserves_publication_date_and_records_source_errors(self):
         channel = self.store.action("create_channel", {"name": "feed", "sources": "https://example.com/feed"})

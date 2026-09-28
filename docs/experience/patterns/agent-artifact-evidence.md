@@ -13,3 +13,9 @@
 The [project audit](../../2026-09-29_project-audit-and-first-use.md), R04, re-ran the existing successful-run test and separately simulated a process that creates a visible file and then exits with code 1. The file existed and the task became Blocked, but no Artifact was recorded. At baseline `5205d68`, `Store._run_codex` only compares snapshots on success; cancellation/interruption can also return before that comparison.
 
 The successful-run method remains useful but is not complete coverage of execution evidence. Inspect the real workspace even when a run failed or was canceled. A future repair should collect evidence for all terminal states after the process has stopped, retaining failure status and accounting for concurrent changes. The failure-path defect was verified once; cancellation/interruption omissions are code-based inferences here, not independently reproduced runs. No repair was applied in the audit.
+
+## Repair verification (2026-09-29)
+
+The repair persists the baseline on AgentRun and collects evidence after process termination on both success and error paths. Startup recovery collects missing evidence once and explicitly labels it as recovered, because other changes may have occurred since interruption. Overlapping workspaces cannot run concurrently inside this application. This does not prevent edits by external tools.
+
+`tests/test_repairs.py` now covers failed/canceled processes, timeout, and restart after Running/Canceled records, alongside existing successful and client-close tests. All passed in the repair validation; these are simulated subprocesses and isolated workspaces, not evidence of a real cloud model's correctness. The old failure-path omission is repaired; metadata snapshot limitations still apply.

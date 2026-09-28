@@ -54,7 +54,7 @@ function FormModal({ modal, data, run, close }) {
     let payload = values
     if (kind === 'task' || kind === 'task-edit') {
       operation = editing ? 'update_task' : 'create_task'
-      payload = { ...values, project_id: values.project_id || null, deadline: values.deadline || null, ...(editing ? { id: item.id } : {}) }
+      payload = { ...values, intelligence_id: item.intelligence_id || null, project_id: values.project_id || null, deadline: values.deadline || null, ...(editing ? { id: item.id } : {}) }
     } else if (kind === 'project' || kind === 'project-edit') {
       operation = editing ? 'update_project' : 'create_project'
       if (editing) payload.id = item.id
@@ -162,7 +162,7 @@ export default function App() {
       </>}</main>
     </div>
     {notice && <div className={`toast ${notice.error ? 'error' : ''}`} role="status">{notice.error || notice.message}<button onClick={() => setNotice(null)} aria-label="关闭通知">×</button></div>}
-    {pending && <div className="pending-indicator" role="status">{['generate_brief','generate_project_pulse','summarize_log'].includes(pending) ? '正在整理上下文并生成内容…' : pending === 'refresh_channel' ? '正在读取频道来源…' : '正在保存…'}</div>}
+    {pending && <div className="pending-indicator" role="status">{['generate_brief','generate_project_pulse','summarize_log'].includes(pending) ? '正在整理上下文并生成内容…' : ['refresh_channel','sync_workbuddy'].includes(pending) ? '正在读取信息来源…' : '正在保存…'}</div>}
     {modal && data && <FormModal modal={modal} data={data} run={run} close={() => setModal(null)} />}
   </div>
 }

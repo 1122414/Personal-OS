@@ -19,3 +19,9 @@ In the reviewed implementation, `Store.draft_log` returns the existing draft unl
 The [2026-09-29 project audit](../../2026-09-29_project-audit-and-first-use.md), R01 and R02, reproduced a History counter of one completed task while its draft still said none and listed that task as unfinished. A temporary Store fixture returned a Done task in its saved brief; confirmation rejected it. Captured generation input used a current-day unconfirmed draft as `yesterday_log`.
 
 These are verified-once defects at code baseline `5205d68`, not repaired behavior. Project Pulse staleness was verified by inspecting its generation condition, not by a multi-day experiment. Existing `tests/test_store.py::StoreTests.test_daily_loop_persists_and_generates_from_events` covers the normal ordering but does not cover late events. Shared symptoms alone do not justify applying the same remedy to every cached value; plans and sealed records have different ownership rules.
+
+## Repair verification (2026-09-29)
+
+The repaired Daily Log stores source event IDs, refuses stale confirmation, preserves old drafts in revisions, and checks that manual acknowledgement refers to the exact event set the user saw. The brief filters current task eligibility and ignored intelligence, while model input selects a confirmed log from before today with its date. Project Pulse has a generated timestamp/stale flag; automatic regeneration is bounded to one daily attempt and preserves manual text.
+
+Validated by `tests/test_repairs.py` (late events, concurrent events during edit, prior confirmed context, ignored intelligence, and pulse staleness) plus an isolated browser sequence. This is verified once per repair scenario; multi-day/sleep behavior remains unverified. New source events after a sealed log do not authorize rewriting that sealed text.

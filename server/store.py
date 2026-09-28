@@ -12,12 +12,13 @@ import tempfile
 import threading
 import uuid
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from .feeds import fetch_feed, published_time
+from .workbuddy import read_updates, source_root
 
 
 KINDS = (
@@ -30,6 +31,7 @@ TASK_SOURCES = {"Manual", "Morning Brief", "Intelligence", "Project", "Agent Sug
 DEFAULT_SETTINGS = {
     "theme_mode": "auto", "manual_theme": "morning", "nickname": "博士",
     "obsidian_vault": "", "motion": "low",
+    "workbuddy_root": "", "workbuddy_enabled": False, "workbuddy_since": "",
 }
 
 
@@ -100,6 +102,7 @@ class Store:
         self._workers: dict[str, threading.Thread] = {}
         self._stopping = False
         self._active_jobs = 0
+        self._sync_lock = threading.Lock()
         self._recover_interrupted_runs()
 
     def close(self) -> None:
@@ -205,11 +208,21 @@ class Store:
                 "runtime": {"codex_available": bool(shutil.which("codex"))},
             }
             result["history_dates"] = self.history_dates()
+            result["intelligence_items"] = self.intelligence_items()
             result["daily_logs"] = [self.log_view(log) for log in result["daily_logs"]]
             result["projects"] = [{**project, "pulse_stale": self.pulse_stale(project)} for project in result["projects"]]
             result["agent_runs"] = [{k: v for k, v in run.items() if k != "before_snapshot"} for run in result["agent_runs"]]
             result["backups"] = self.backups()
             return result
+
+    def intelligence_items(self) -> list[dict[str, Any]]:
+        def source_time(item):
+            value = item.get("source_updated_at") or item.get("published_at") or item["created_at"]
+            try:
+                return datetime.fromisoformat(value).timestamp()
+            except (ValueError, TypeError, OverflowError):
+                return 0
+        return sorted(self.all("intelligence_item"), key=source_time, reverse=True)
 
     @synchronized
     def history_dates(self) -> list[str]:
@@ -284,6 +297,8 @@ class Store:
                 "create_backup": self.create_backup,
                 "restore_backup": self.restore_backup,
                 "export_data": self.export_data,
+                "sync_workbuddy": self.sync_workbuddy,
+                "propose_intelligence_knowledge": self.propose_intelligence_knowledge,
                 "add_to_today": self.add_to_today,
                 "create_decision": self.create_decision,
                 "update_decision": self.update_decision,
@@ -312,7 +327,7 @@ class Store:
         }
         if name not in dispatch:
             raise ValueError("未知操作")
-        if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log"):
+        if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy"):
             with self.lock:
                 self._active_jobs += 1
             try:
@@ -355,6 +370,9 @@ class Store:
         source = p.get("source") or "Manual"
         if source not in TASK_SOURCES:
             raise ValueError("任务来源无效")
+        intelligence_id = p.get("intelligence_id") or None
+        if intelligence_id and not self.get("intelligence_item", intelligence_id):
+            raise ValueError("来源资料不存在")
         item = self.put("task", {
             "title": required_text(p.get("title"), "任务标题", 200),
             "description": (p.get("description") or "").strip()[:10000],
@@ -364,6 +382,7 @@ class Store:
             "executor_type": p.get("executor_type") if p.get("executor_type") in ("self", "agent") else "self",
             "agent_id": "Codex" if p.get("executor_type") == "agent" else None,
             "result": "", "review_status": None, "created_by": "user",
+            "intelligence_id": intelligence_id,
         })
         self.event("TaskCreated", "task", item["id"], project_id, {"title": item["title"], "source": source})
         return item
@@ -605,6 +624,9 @@ class Store:
             summary += "\n\n未完成：\n" + "\n".join(f"- {x}" for x in unfinished)
         if blocked:
             summary += "\n\n阻塞与执行异常（需要处理）：\n" + "\n".join(f"- {x}" for x in dict.fromkeys(blocked))
+        external = [e["details"].get("title", "外部资料") for e in reversed(events) if e["type"] in ("ExternalRecordImported", "ExternalRecordUpdated")]
+        if external:
+            summary += "\n\n外部资料收录/更新（不计为任务完成）：\n" + "\n".join(f"- {x}" for x in dict.fromkeys(external))
         revisions = list(log.get("revisions", [])) if log else []
         if log:
             revisions.append({"summary": log["summary"], "saved_at": stamp()})
@@ -691,10 +713,10 @@ class Store:
         if not item:
             raise ValueError("情报不存在")
         task = self.create_task({
-            "title": f"深入研究：{item['title']}",
-            "description": f"来源：{item['source']}\n{item.get('url') or ''}\n\n研究原因：{item['why_recommended']}",
+            "title": f"深入研究：{item['title']}"[:200],
+            "description": f"来源：{item['source']}\n{item.get('source_path') or item.get('url') or ''}\n\n研究原因：{item['why_recommended']}\n\n来源摘要：{item.get('summary') or ''}",
             "project_id": item.get("project_id"), "source": "Intelligence",
-            "executor_type": "agent",
+            "executor_type": "agent", "intelligence_id": item["id"],
         })
         item["feedback"] = "deep_research"
         self.put("intelligence_item", item)
@@ -773,7 +795,7 @@ class Store:
 
     def save_settings(self, p: dict[str, Any]) -> dict[str, Any]:
         item = self.get("settings", "settings") or {"id": "settings", **DEFAULT_SETTINGS}
-        for field in ("theme_mode", "manual_theme", "nickname", "obsidian_vault", "motion"):
+        for field in ("theme_mode", "manual_theme", "nickname", "obsidian_vault", "motion", "workbuddy_root", "workbuddy_since"):
             if field in p:
                 item[field] = str(p[field]).strip()
         if item["theme_mode"] not in ("auto", "manual") or item["manual_theme"] not in ("morning", "afternoon", "night"):
@@ -781,8 +803,71 @@ class Store:
         item["nickname"] = item["nickname"][:50]
         if item["obsidian_vault"] and not Path(item["obsidian_vault"]).is_dir():
             raise ValueError("Obsidian vault 路径不存在")
+        if "workbuddy_enabled" in p:
+            if not isinstance(p["workbuddy_enabled"], bool):
+                raise ValueError("WorkBuddy 开关必须为布尔值")
+            item["workbuddy_enabled"] = p["workbuddy_enabled"]
+        if item.get("workbuddy_root"):
+            item["workbuddy_root"] = str(source_root(item["workbuddy_root"]))
+            item["workbuddy_since"] = past_or_today(item.get("workbuddy_since") or (date.today() - timedelta(days=7)).isoformat())
+        elif item.get("workbuddy_enabled"):
+            raise ValueError("请先填写 WorkBuddy 数据目录")
         item = self.put("settings", item)
         self.event("SettingsUpdated", "settings", "settings", details={"fields": list(p)})
+        return item
+
+    def sync_workbuddy(self, p: dict[str, Any]) -> dict[str, Any]:
+        if not self._sync_lock.acquire(blocking=False):
+            raise ValueError("WorkBuddy 正在同步，请等待完成")
+        try:
+            settings = self.get("settings", "settings")
+            root = settings.get("workbuddy_root")
+            if not root:
+                raise ValueError("请先保存 WorkBuddy 数据目录")
+            since = settings.get("workbuddy_since") or (date.today() - timedelta(days=7)).isoformat()
+            previous = {x["external_id"]: x for x in self.all("intelligence_item") if x.get("source_kind") == "workbuddy" and x.get("source_root") == root}
+            result = read_updates(root, since, {sid: item.get("source_fingerprint", "") for sid, item in previous.items()})
+            with self.lock:
+                if self._stopping:
+                    raise ValueError("服务正在关闭，同步未写入")
+                current_settings = self.get("settings", "settings")
+                if current_settings.get("workbuddy_root") != root or current_settings.get("workbuddy_since") != settings.get("workbuddy_since"):
+                    raise ValueError("同步期间配置已改变，请重新同步")
+                if not self.get("intelligence_channel", "workbuddy"):
+                    self.put("intelligence_channel", {"id": "workbuddy", "name": "WorkBuddy", "boundary": "本地会话与研究资料", "sources": "", "filter_rule": "", "daily_limit": 50, "connector": "workbuddy"})
+                added, updated = 0, 0
+                for record in result["records"]:
+                    record_id = uuid.uuid5(uuid.NAMESPACE_URL, f"personal-os:workbuddy:{root}:{record['external_id']}").hex
+                    old = self.get("intelligence_item", record_id)
+                    item = self.put("intelligence_item", {
+                        **(old or {}), **record,
+                        "id": record_id,
+                        "source": "WorkBuddy", "source_kind": "workbuddy", "source_root": root,
+                        "url": "", "channel_id": "workbuddy", "project_id": old.get("project_id") if old else None,
+                        "why_recommended": "来自你连接的 WorkBuddy 本地会话；外部结果需要核对，不自动计为完成。",
+                        "fetched_at": stamp(), "feedback": old.get("feedback", "unread") if old else "unread",
+                    })
+                    added += int(old is None)
+                    updated += int(old is not None)
+                    self.event("ExternalRecordUpdated" if old else "ExternalRecordImported", "intelligence_item", item["id"], item.get("project_id"), {"title": item["title"], "source": "WorkBuddy", "source_updated_at": item["source_updated_at"]})
+                status = {"at": stamp(), "added": added, "updated": updated, "unchanged": result["unchanged"], "checked": result["checked"], "errors": result["errors"][:30], "error_count": len(result["errors"])}
+                current_settings["workbuddy_last_sync"] = status
+                self.put("settings", current_settings)
+                return {**status, "message": f"WorkBuddy 新增 {added} 条，更新 {updated} 条，未变化 {result['unchanged']} 条"}
+        finally:
+            self._sync_lock.release()
+
+    def propose_intelligence_knowledge(self, p: dict[str, Any]) -> dict[str, Any]:
+        source = self._existing("intelligence_item", p)
+        pending = next((x for x in self.all("knowledge_proposal") if x.get("intelligence_id") == source["id"] and x["status"] == "Review"), None)
+        if pending:
+            return pending
+        content = source.get("content") or source.get("summary") or source["title"]
+        content = f"来源：{source['source']}\n{source.get('source_path') or source.get('url') or ''}\n\n{content}"
+        if len(content) > 20000:
+            content = content[:19900] + "\n\n[内容较长，草稿已截断；请核对原会话后再批准写入。]"
+        item = self.put("knowledge_proposal", {"task_id": None, "intelligence_id": source["id"], "source_title": source["title"], "title": source["title"][:200], "content": content, "status": "Review", "path": None})
+        self.event("KnowledgeProposed", "knowledge_proposal", item["id"], source.get("project_id"), {"title": item["title"]})
         return item
 
     def propose_knowledge(self, p: dict[str, Any]) -> dict[str, Any]:
@@ -843,6 +928,8 @@ class Store:
                     task["status"] = "Blocked"
                     self.put("task", task)
                 self.event("AgentRunInterrupted", "agent_run", run["id"], task.get("project_id") if task else None)
+            elif "before_snapshot" in run and not run.get("evidence_recorded"):
+                self._record_artifacts(run, run["before_snapshot"], recovered=True)
 
     def scan_obsidian(self, p: dict[str, Any]) -> dict[str, Any]:
         day = p.get("date") or local_day()
@@ -1079,7 +1166,7 @@ class Store:
             "yesterday_log": logs[0]["summary"] if logs else "",
             "previous_log_date": logs[0]["date"] if logs else None,
             "blocked_tasks": [{"title": t["title"], "project_id": t.get("project_id")} for t in self.all("task") if t["status"] == "Blocked" and not t.get("archived_at")],
-            "intelligence": [{"title": x["title"], "why_recommended": x["why_recommended"]} for x in self.all("intelligence_item") if x.get("feedback") != "ignore"][:15],
+            "intelligence": [{"title": x["title"], "why_recommended": x["why_recommended"], "source": x["source"], "source_updated_at": x.get("source_updated_at")} for x in self.intelligence_items() if x.get("feedback") != "ignore"][:15],
             "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"]],
         }
         prompt = (
@@ -1161,6 +1248,8 @@ class Store:
                 raise ValueError(f"Codex 生成失败：{exc}") from exc
             if process.returncode != 0 or not output.exists():
                 raise ValueError("Codex 未能返回结果，请检查运行时配置")
+            if self._stopping:
+                raise ValueError("服务正在关闭，生成结果未写入")
             return output.read_text(encoding="utf-8").strip()
 
     def _existing(self, kind: str, p: dict[str, Any]) -> dict[str, Any]:

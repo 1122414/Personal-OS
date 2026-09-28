@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .store import Store, local_day
+from .store import Store, local_day, stamp
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -154,6 +154,18 @@ def daily_automation(store: Store, stop: threading.Event) -> None:
             hour = datetime.now().hour
             day = local_day()
             events = store.events(day)
+            settings = store.get("settings", "settings")
+            last_sync = settings.get("workbuddy_last_sync", {}).get("at")
+            due = not last_sync or datetime.now().astimezone().timestamp() - datetime.fromisoformat(last_sync).timestamp() >= 300
+            if settings.get("workbuddy_enabled") and due:
+                try:
+                    store.action("sync_workbuddy", {})
+                except (ValueError, OSError) as exc:
+                    with store.lock:
+                        if not store._stopping:
+                            settings = store.get("settings", "settings")
+                            settings["workbuddy_last_sync"] = {"at": stamp(), "errors": [{"source": "WorkBuddy", "error": str(exc)}], "error_count": 1}
+                            store.put("settings", settings)
             if 8 <= hour < 20:
                 refreshed = {event["subject_id"] for event in events if event["type"] == "IntelligenceChannelRefreshed"}
                 for channel in store.all("intelligence_channel"):
