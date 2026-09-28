@@ -1,18 +1,32 @@
 import React, { useEffect, useState } from 'react'
 import { Button, Empty, Panel, dateLabel } from '../ui.jsx'
+import DailyReports from './DailyReports.jsx'
 
-export default function Intelligence({ data, run, open, focus }) {
+export default function Intelligence(props) {
+  const [view, setView] = useState('reports')
+  useEffect(() => {
+    if (props.focus?.startsWith('report-')) setView('reports')
+    else if (props.focus) {
+      const item = props.data.intelligence_items.find(item => item.id === props.focus)
+      if (item) setView(item.source_kind === 'workbuddy' ? 'conversations' : 'sources')
+    }
+  }, [props.focus])
+  return <div className="page intelligence-shell"><div className="tabs report-tabs">{[['reports', 'AI 日报'], ['sources', '其他情报'], ['conversations', '历史会话']].map(([key, label]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>)}</div>{view === 'reports' ? <DailyReports {...props} /> : <SourceIntelligence key={view} {...props} conversations={view === 'conversations'} />}</div>
+}
+
+function SourceIntelligence({ data, run, open, focus, conversations }) {
   const [channelId, setChannel] = useState('all')
   const [selectedId, select] = useState(focus || null)
   useEffect(() => { if (focus) select(focus) }, [focus])
-  const items = data.intelligence_items.filter(item => item.feedback !== 'ignore' && (channelId === 'all' || item.channel_id === channelId))
+  const channels = data.intelligence_channels.filter(item => (item.connector === 'workbuddy') === conversations)
+  const items = data.intelligence_items.filter(item => (item.source_kind === 'workbuddy') === conversations && item.feedback !== 'ignore' && (channelId === 'all' || item.channel_id === channelId))
   const selected = items.find(item => item.id === selectedId) || items[0]
   const channel = data.intelligence_channels.find(item => item.id === selected?.channel_id)
   const project = data.projects.find(item => item.id === selected?.project_id)
 
   return <div className="page intelligence-page"><div className="intelligence-layout">
-    <Panel className="channel-rail" title="频道" action={<button className="icon-button" onClick={() => open('channel')} title="新建频道">＋</button>}><button className={`channel-option ${channelId === 'all' ? 'selected' : ''}`} onClick={() => setChannel('all')}>✦ <span>全部内容</span></button>{data.intelligence_channels.map(item => <button className={`channel-option ${channelId === item.id ? 'selected' : ''}`} onClick={() => setChannel(item.id)} key={item.id}>◎ <span>{item.name}</span></button>)}<Button className="channel-add" onClick={() => open('channel')}>＋ 新建频道</Button>{channelId !== 'all' && <div className="channel-tools"><p className="muted">{channelId === 'workbuddy' ? '按原会话更新时间排序；同步范围在设置中调整。' : '按关键词筛选；收藏和忽略暂不训练推荐模型。'}</p>{channelId !== 'workbuddy' && <Button onClick={() => open('channel-edit', data.intelligence_channels.find(item => item.id === channelId))}>编辑边界</Button>}<Button onClick={() => run(channelId === 'workbuddy' ? 'sync_workbuddy' : 'refresh_channel', { id: channelId })}>刷新来源</Button>{data.intelligence_channels.find(item => item.id === channelId)?.last_refresh?.errors?.map((error, index) => <p className="notice" role="alert" key={index}>{error.source}：{error.error}</p>)}</div>}</Panel>
-    <Panel className="intelligence-list" title="情报与资料" action={<span className="overline">{items.length} 条</span>}>
+    <Panel className="channel-rail" title="频道" action={<button className="icon-button" onClick={() => open('channel')} title="新建频道">＋</button>}><button className={`channel-option ${channelId === 'all' ? 'selected' : ''}`} onClick={() => setChannel('all')}>✦ <span>全部内容</span></button>{channels.map(item => <button className={`channel-option ${channelId === item.id ? 'selected' : ''}`} onClick={() => setChannel(item.id)} key={item.id}>◎ <span>{item.name}</span></button>)}<Button className="channel-add" onClick={() => open('channel')}>＋ 新建频道</Button>{channelId !== 'all' && <div className="channel-tools"><p className="muted">{channelId === 'workbuddy' ? '按原会话更新时间排序；同步范围在设置中调整。' : '按关键词筛选；收藏和忽略暂不训练推荐模型。'}</p>{channelId !== 'workbuddy' && <Button onClick={() => open('channel-edit', data.intelligence_channels.find(item => item.id === channelId))}>编辑边界</Button>}<Button onClick={() => run(channelId === 'workbuddy' ? 'sync_workbuddy' : 'refresh_channel', { id: channelId })}>刷新来源</Button>{data.intelligence_channels.find(item => item.id === channelId)?.last_refresh?.errors?.map((error, index) => <p className="notice" role="alert" key={index}>{error.source}：{error.error}</p>)}</div>}</Panel>
+    <Panel className="intelligence-list" title={conversations ? "历史会话（可选）" : "情报与资料"} action={<span className="overline">{items.length} 条</span>}>
       {items.length ? items.map(item => <button key={item.id} className={`intelligence-card ${selected?.id === item.id ? 'selected' : ''}`} onClick={() => { select(item.id); if (item.feedback === 'unread') run('feedback_intelligence', { id: item.id, feedback: 'read' }) }}><span className="article-image">✧</span><span><strong>{item.title}</strong><p>{item.summary || item.why_recommended}</p><small>{item.source} · {item.published_at ? `发布于 ${dateLabel(item.published_at)}` : '发布时间未知'}</small></span></button>) : <Empty title="还没有精选内容" detail="先建立频道，定义边界，再添加值得关注的信息。" action={<Button onClick={() => open('channel')}>新建频道</Button>} />}
       <Button onClick={() => open('intelligence')} className="full-width">＋ 添加情报</Button>
     </Panel>

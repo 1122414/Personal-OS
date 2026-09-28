@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .store import Store, local_day, stamp
+from .reports import read_report
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -76,6 +77,13 @@ def make_handler(store: Store, static_root: Path):
                 return
             if route == "/api/health":
                 self._json(200, {"status": "ok"})
+                return
+            if route == "/api/obsidian/report":
+                try:
+                    relative = parse_qs(urlparse(self.path).query).get("path", [""])[0]
+                    self._json(200, read_report(store.get("settings", "settings"), relative))
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
                 return
             if route == "/api/history":
                 try:

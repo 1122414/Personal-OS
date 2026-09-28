@@ -17,7 +17,7 @@ export default function Today({ data, run, open, navigate }) {
   const hour = new Date().getHours()
   const mode = !plan ? 'plan' : hour >= 20 || hour < 6 ? 'review' : 'work'
   const latestProject = data.projects.find(project => project.status === 'Active')
-  const topIntel = data.intelligence_items.filter(item => item.feedback !== 'ignore').slice(0, 2)
+  const reports = data.daily_reports?.reports.filter(item => item.date === data.daily_reports.latest_date).slice(0, 4) || []
 
   function shift(index, delta) {
     const next = [...ordered]
@@ -56,8 +56,8 @@ export default function Today({ data, run, open, navigate }) {
       <Panel title="项目脉搏" action={<button className="text-link" onClick={() => navigate('projects')}>全部项目 →</button>}>
         {latestProject ? <div className="pulse"><strong>{latestProject.name}</strong><p>{latestProject.pulse || latestProject.stage || '等待项目进展'}</p><small>当前阶段 · {latestProject.stage}</small></div> : <Empty title="尚无项目" detail="建立项目，今天的任务便有了上下文。" action={<Button onClick={() => open('project')}>创建项目</Button>} />}
       </Panel>
-      <Panel title="情报精选" action={<button className="text-link" onClick={() => navigate('intelligence')}>查看情报 →</button>}>
-        {topIntel.length ? topIntel.map(item => <button className="mini-row" key={item.id} onClick={() => navigate('intelligence', item.id)}><span className="small-symbol">✧</span><span>{item.title}</span></button>) : <Empty title="暂无情报" detail="在情报页设定频道和来源。" />}
+      <Panel title="AI 日报" action={<button className="text-link" onClick={() => navigate('intelligence')}>阅读全文 →</button>}>
+        {reports.length ? <><p className="muted">{data.daily_reports.latest_date === data.today ? '今日报告' : `今天尚未发布 · 最新 ${data.daily_reports.latest_date}`}</p>{reports.map(item => <button className="mini-row" key={item.id} onClick={() => navigate('intelligence', item.id)}><span className="small-symbol">▤</span><span>{item.title}</span></button>)}</> : <Empty title="尚未发现 AI 日报" detail="读取 Obsidian 日报目录中的成品报告。" action={<Button onClick={() => navigate('intelligence')}>查看来源</Button>} />}
       </Panel>
       <Panel title="等待审核" action={<button className="text-link" onClick={() => navigate('review')}>进入审核 →</button>}>
         {waiting.length ? waiting.slice(0, 3).map(task => <button className="mini-row" key={task.id} onClick={() => navigate('review', task.id)}><span className="small-symbol">◉</span><span>{task.title}</span><small>待确认</small></button>) : <Empty title="没有待审核事项" />}

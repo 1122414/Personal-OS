@@ -19,6 +19,7 @@ from typing import Any
 
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
+from .reports import folder_name, report_index
 
 
 KINDS = (
@@ -32,6 +33,7 @@ DEFAULT_SETTINGS = {
     "theme_mode": "auto", "manual_theme": "morning", "nickname": "博士",
     "obsidian_vault": "", "motion": "low",
     "workbuddy_root": "", "workbuddy_enabled": False, "workbuddy_since": "",
+    "theme_transparency": 8, "daily_reports_folder": "每日AI",
 }
 
 
@@ -201,13 +203,14 @@ class Store:
         with self.lock:
             result = {
                 **{kind + "s": self.all(kind) for kind in KINDS if kind != "settings"},
-                "settings": self.get("settings", "settings"),
+                "settings": {**DEFAULT_SETTINGS, **self.get("settings", "settings")},
                 "events": self.events(),
                 "today": local_day(),
                 "brief": self.brief(),
                 "runtime": {"codex_available": bool(shutil.which("codex"))},
             }
             result["history_dates"] = self.history_dates()
+            result["daily_reports"] = report_index(result["settings"])
             result["intelligence_items"] = self.intelligence_items()
             result["daily_logs"] = [self.log_view(log) for log in result["daily_logs"]]
             result["projects"] = [{**project, "pulse_stale": self.pulse_stale(project)} for project in result["projects"]]
@@ -803,6 +806,13 @@ class Store:
         item["nickname"] = item["nickname"][:50]
         if item["obsidian_vault"] and not Path(item["obsidian_vault"]).is_dir():
             raise ValueError("Obsidian vault 路径不存在")
+        if "theme_transparency" in p:
+            transparency = p["theme_transparency"]
+            if type(transparency) is not int or not 0 <= transparency <= 100:
+                raise ValueError("主题透明度必须是 0 到 100 的整数")
+            item["theme_transparency"] = transparency
+        if "daily_reports_folder" in p:
+            item["daily_reports_folder"] = folder_name(p["daily_reports_folder"])
         if "workbuddy_enabled" in p:
             if not isinstance(p["workbuddy_enabled"], bool):
                 raise ValueError("WorkBuddy 开关必须为布尔值")
@@ -1166,7 +1176,7 @@ class Store:
             "yesterday_log": logs[0]["summary"] if logs else "",
             "previous_log_date": logs[0]["date"] if logs else None,
             "blocked_tasks": [{"title": t["title"], "project_id": t.get("project_id")} for t in self.all("task") if t["status"] == "Blocked" and not t.get("archived_at")],
-            "intelligence": [{"title": x["title"], "why_recommended": x["why_recommended"], "source": x["source"], "source_updated_at": x.get("source_updated_at")} for x in self.intelligence_items() if x.get("feedback") != "ignore"][:15],
+            "intelligence": [{"title": x["title"], "why_recommended": x["why_recommended"], "source": x["source"], "source_updated_at": x.get("source_updated_at")} for x in self.intelligence_items() if x.get("feedback") != "ignore" and x.get("source_kind") != "workbuddy"][:15],
             "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"]],
         }
         prompt = (

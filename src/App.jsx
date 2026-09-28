@@ -114,6 +114,7 @@ export default function App() {
   const [notice, setNotice] = useState(null)
   const [pending, setPending] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [previewTransparency, setPreviewTransparency] = useState(null)
   useClock()
   useEffect(() => { loadState().then(setData).catch(error => setNotice({ error: error.message })).finally(() => setLoading(false)) }, [])
   useEffect(() => { const id = setInterval(() => loadState().then(setData).catch(() => {}), data?.agent_runs?.some(item => item.status === 'Running') ? 8000 : 30000); return () => clearInterval(id) }, [data?.agent_runs?.some(item => item.status === 'Running')])
@@ -122,6 +123,8 @@ export default function App() {
   const settings = data?.settings || { theme_mode: 'auto', manual_theme: 'morning', nickname: '博士' }
   const theme = settings.theme_mode === 'manual' ? settings.manual_theme : themeByTime()
   const nickname = settings.nickname?.trim()
+
+  async function refresh() { const next = await loadState(); setData(next); return next }
 
   function navigate(next, id = null) { setPage(next); setFocus(id); window.location.hash = id ? `${next}/${id}` : next; setSearch('') }
   function open(kind, value) { setModal({ kind, value }); setSearch('') }
@@ -147,7 +150,8 @@ export default function App() {
     ...data.projects.filter(item => item.name.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'projects', title: item.name, label: '项目' })),
   ], [search, data])
 
-  return <div className={`app-shell theme-${theme}`}>
+  const transparency = previewTransparency ?? settings.theme_transparency ?? 8
+  return <div className={`app-shell theme-${theme}`} style={{ '--surface-alpha': (100 - transparency) / 100 }}>
     <aside className="sidebar"><div className="brand"><div className="brand-mark">♆</div><div><strong>Personal OS</strong><small>ABYSS CALLS · BUT ALSO HEALS</small></div></div><nav aria-label="主导航">{NAV.map(([key, icon, label, english], index) => <button key={key} className={`nav-item ${page === key ? 'active' : ''} ${index === 6 ? 'settings-nav' : ''}`} onClick={() => navigate(key)}><span className="nav-icon">{icon}</span><span>{label}<small>{english}</small></span></button>)}</nav><div className="sidebar-quote"><span>✧</span><p>在混沌中，仍然前行。</p><small>PERSONAL OS · A MORE FOCUSED YOU</small></div></aside>
     <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索任务、项目标题，或填写新任务标题…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
       <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1><p>{page === 'today' ? '今天值得推进的事，正在这里等你确认。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
@@ -155,10 +159,10 @@ export default function App() {
         {page === 'today' && <Today data={data} run={run} open={open} navigate={navigate} />}
         {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}
         {page === 'projects' && <Projects data={data} run={run} open={open} focus={focus} navigate={navigate} />}
-        {page === 'intelligence' && <Intelligence data={data} run={run} open={open} focus={focus} />}
+        {page === 'intelligence' && <Intelligence data={data} run={run} open={open} focus={focus} refresh={refresh} navigate={navigate} />}
         {page === 'review' && <Review data={data} run={run} open={open} focus={focus} />}
         {page === 'history' && <History data={data} run={run} open={open} />}
-        {page === 'settings' && <Settings data={data} run={run} open={open} theme={theme} />}
+        {page === 'settings' && <Settings data={data} run={run} open={open} theme={theme} previewTransparency={setPreviewTransparency} />}
       </>}</main>
     </div>
     {notice && <div className={`toast ${notice.error ? 'error' : ''}`} role="status">{notice.error || notice.message}<button onClick={() => setNotice(null)} aria-label="关闭通知">×</button></div>}
