@@ -27,6 +27,7 @@ function RecordDetail({ item, data, run, navigate }) {
   const topics = data.learning_topics.filter(topic => topic.record_ids.includes(item.id))
   return <><div className="detail-title"><div><small className="muted">{RECORD_TYPES[item.record_type]} · {recordDate(item)}</small><h2>{item.title}</h2></div><Button onClick={() => setEditing(true)}>编辑</Button></div>
     <Markdown text={item.content} />
+    {item.source?.kind === 'obsidian' && <p className="muted">来自 Obsidian：{item.source.path} · 保存时快照，原文件不会同步修改。</p>}
     {item.original_content !== item.content && <details className="original-record"><summary>最初记下的原文</summary><Markdown text={item.original_content} /></details>}
     <Materials items={materials} />
     <div className="workspace-actions"><Button variant="primary" onClick={() => setNewTopic(true)}>开始讨论</Button><Button onClick={() => setAdding(!adding)}>添加资料</Button><Button onClick={async () => { const task = item.task_id ? { id: item.task_id } : await run('record_to_task', { id: item.id }); if (task) navigate('tasks', task.id) }}>{item.task_id ? '查看关联任务' : '转为任务'}</Button></div>

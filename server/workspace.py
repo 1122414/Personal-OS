@@ -19,6 +19,7 @@ WORKSPACE_KINDS = ("record", "material", "learning_topic")
 WORKSPACE_ACTIONS = (
     "create_record", "update_record", "add_material", "create_learning_topic",
     "update_learning_topic", "link_record", "record_to_task", "export_workspace_note",
+    "import_obsidian_record",
 )
 RECORD_TYPES = {"note", "idea", "resource", "status"}
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -84,6 +85,32 @@ class WorkspaceMixin:
         })
         self.event("RecordCreated", "record", item["id"], details={"title": item["title"]})
         return item
+
+    def import_obsidian_record(self, p):
+        topic = self._existing("learning_topic", p)
+        relative = required_text(p.get("path"), "笔记路径", 1000)
+        vault = self.get("settings", "settings").get("obsidian_vault")
+        if not vault or not Path(vault).is_dir():
+            raise ValueError("请先配置 Obsidian 仓库")
+        root = Path(vault).resolve()
+        if Path(relative).is_absolute() or any(part.startswith(".") for part in Path(relative).parts):
+            raise ValueError("笔记路径无效")
+        path = (root / relative).resolve()
+        if not path.is_relative_to(root) or path.suffix.lower() != ".md" or not path.is_file():
+            raise ValueError("笔记必须位于已配置的仓库中")
+        try:
+            with path.open("rb") as stream:
+                body = stream.read(200001)
+            if len(body) > 200000:
+                raise ValueError("笔记超过 200 KB，请选择所需段落复制到记录")
+            content = body.decode("utf-8")
+        except (OSError, UnicodeError):
+            raise ValueError("无法读取 UTF-8 Markdown 笔记") from None
+        record = self.create_record({"title": path.stem[:200], "content": content})
+        record["source"] = {"kind": "obsidian", "path": relative, "captured_at": stamp()}
+        record = self.put("record", record)
+        self.link_record({"id": topic["id"], "record_id": record["id"]})
+        return record
 
     def update_record(self, p):
         item = self._existing("record", p)

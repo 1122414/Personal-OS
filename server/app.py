@@ -76,6 +76,12 @@ def make_handler(store: Store, static_root: Path):
             if route == "/api/state":
                 self._json(200, store.state())
                 return
+            if route.startswith("/api/learning/"):
+                try:
+                    self._json(200, store.learning_detail(route.removeprefix("/api/learning/")))
+                except ValueError as exc:
+                    self._json(404, {"error": str(exc)})
+                return
             if route == "/api/health":
                 self._json(200, {"status": "ok"})
                 return

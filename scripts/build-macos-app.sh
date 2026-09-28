@@ -26,6 +26,12 @@ swiftc -parse-as-library -swift-version 5 -O \
 
 swiftc -parse-as-library -swift-version 5 -O \
   -module-cache-path "$project_root/build/swift-module-cache" \
+  -sdk "$sdk" -framework PDFKit \
+  desktop/ExtractPDF.swift -o "$project_root/build/PersonalOSPDF"
+cp "$project_root/build/PersonalOSPDF" "$app/Contents/Resources/runtime/server/PersonalOSPDF"
+
+swiftc -parse-as-library -swift-version 5 -O \
+  -module-cache-path "$project_root/build/swift-module-cache" \
   -sdk "$sdk" -framework AppKit \
   desktop/MakeIcon.swift -o "$project_root/build/make-personal-os-icon"
 "$project_root/build/make-personal-os-icon" "$project_root/build/PersonalOS.iconset"

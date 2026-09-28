@@ -29,4 +29,11 @@
 ## 进度
 
 - A1：完成。`python3 -m unittest discover -s tests -q`：50 项通过；`npm run build` 通过。隔离数据库 + 内置浏览器验证首页保存 → 编辑 → 原始版本保留 → 建立主题 → 刷新后主题和来源保留，控制台无错误。附件、备份恢复、导出边界由 `tests/test_workspace.py` 验证。
-- A2–A4：待实施。
+- A2：完成。63 项 Python 测试与前端构建通过；Mac/PDFKit 构建和签名检查通过。真实 Codex `0.155.0-alpha.16.4` 两轮恢复同一会话并保持测试词，内置浏览器验证实际解释、代码块、模式切换和取消后的问题/重试入口。Obsidian 只读取用户选中笔记的快照。
+- A3–A4：待实施。
+
+## A2 运行时边界
+
+使用本机 `codex app-server` stdio 协议，依据安装版本生成的 JSON Schema 实现 initialize、thread/start/resume、turn/start/interrupt 和可见消息事件。模型沿用 Codex 配置，学习轮次使用 medium 推理强度。每轮在独立临时目录、只读沙箱运行，禁用 shell、Apps、插件、MCP、Hooks、浏览器及多 Agent；不会改写用户配置。配置字段参考 [Codex 官方配置说明](https://developers.openai.com/codex/config-reference/)。
+
+消息先保存再启动运行时，流式可见内容逐次落盘；失败/取消回复不会标为完成。原生会话丢失时可明确选择“重建会话后重试”，POS 原文仍在。图片按本轮勾选发送原图，PDF 只发送明确提取到的页中文字；没有 OCR，也不把图表当作已读。网页采用逐次验证并固定公网 IP 的请求，不执行页面脚本。

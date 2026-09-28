@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import WebKit
+import UniformTypeIdentifiers
 
 @main
 struct PersonalOSMain {
@@ -266,6 +267,18 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelega
             NSWorkspace.shared.open(url)
         }
         return nil
+    }
+
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
+                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.allowedContentTypes = [.pdf, .png, .jpeg, .gif, .webP]
+        panel.beginSheetModal(for: window) { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

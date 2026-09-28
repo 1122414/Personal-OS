@@ -20,3 +20,10 @@ export async function recentObsidian() {
   if (!response.ok) throw new Error('无法读取 Obsidian')
   return response.json()
 }
+
+export async function loadLearning(id) {
+  const response = await fetch(`/api/learning/${encodeURIComponent(id)}`)
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.error || '无法读取学习主题')
+  return data
+}

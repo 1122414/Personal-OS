@@ -129,6 +129,24 @@ class WorkspaceTests(unittest.TestCase):
         self.store.action("restore_backup", backup)
         self.assertEqual(self.store.export_blobs(), [])
 
+    def test_obsidian_import_is_selected_snapshot_and_rejects_escape(self):
+        vault = Path(self.temp.name) / "vault"
+        vault.mkdir()
+        note = vault / "笔记.md"
+        note.write_text("原文", encoding="utf-8")
+        self.store.action("save_settings", {"obsidian_vault": str(vault)})
+        topic = self.store.action("create_learning_topic", {"title": "学习"})
+        record = self.store.action("import_obsidian_record", {"id": topic["id"], "path": "笔记.md"})
+        self.assertEqual(record["content"], "原文")
+        self.store.action("update_record", {"id": record["id"], "expected_updated_at": record["updated_at"], "content": "本地编辑"})
+        self.assertEqual(note.read_text(), "原文")
+        outside = Path(self.temp.name) / "outside.md"
+        outside.write_text("not imported")
+        (vault / "escape.md").symlink_to(outside)
+        for relative in ("../outside.md", str(outside), "escape.md"):
+            with self.assertRaises(ValueError):
+                self.store.action("import_obsidian_record", {"id": topic["id"], "path": relative})
+
 
 if __name__ == "__main__":
     unittest.main()

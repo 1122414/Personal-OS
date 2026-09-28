@@ -18,6 +18,7 @@ from typing import Any
 
 from .common import stamp, local_day, past_or_today, identifier, required_text, synchronized
 from .workspace import WorkspaceMixin, WORKSPACE_KINDS, WORKSPACE_ACTIONS
+from .learning import LearningMixin, LEARNING_KINDS, LEARNING_ACTIONS, PRIVATE_KINDS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
@@ -27,7 +28,7 @@ KINDS = (
     "project", "task", "daily_plan", "daily_log", "decision", "agent_run",
     "artifact", "intelligence_channel", "intelligence_item", "personal_rule",
     "knowledge_proposal", "daily_brief", "settings",
-) + WORKSPACE_KINDS
+) + WORKSPACE_KINDS + LEARNING_KINDS
 TASK_STATES = {"Inbox", "Planned", "Running", "Review", "Done", "Blocked"}
 TASK_SOURCES = {"Manual", "Morning Brief", "Intelligence", "Project", "Agent Suggestion", "Yesterday Carryover"}
 DEFAULT_SETTINGS = {
@@ -40,7 +41,7 @@ DEFAULT_SETTINGS = {
 
 
 
-class Store(WorkspaceMixin):
+class Store(WorkspaceMixin, LearningMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,10 +72,12 @@ class Store(WorkspaceMixin):
         self._active_jobs = 0
         self._sync_lock = threading.Lock()
         self._recover_interrupted_runs()
+        self.init_learning()
 
     def close(self) -> None:
         with self.lock:
             self._stopping = True
+            self.stop_learning()
             for run in self.all("agent_run"):
                 if run.get("status") != "Running":
                     continue
@@ -167,7 +170,7 @@ class Store(WorkspaceMixin):
     def state(self) -> dict[str, Any]:
         with self.lock:
             result = {
-                **{kind + "s": self.all(kind) for kind in KINDS if kind != "settings"},
+                **{kind + "s": self.all(kind) for kind in KINDS if kind != "settings" and kind not in PRIVATE_KINDS},
                 "settings": {**DEFAULT_SETTINGS, **self.get("settings", "settings")},
                 "events": self.events(),
                 "today": local_day(),
@@ -293,7 +296,7 @@ class Store(WorkspaceMixin):
                 "generate_project_pulse": self.generate_project_pulse,
                 "summarize_log": self.summarize_log,
         }
-        dispatch.update({operation: getattr(self, operation) for operation in WORKSPACE_ACTIONS})
+        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS)})
         if name not in dispatch:
             raise ValueError("未知操作")
         if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy"):
@@ -535,6 +538,7 @@ class Store(WorkspaceMixin):
             raise ValueError("备份格式不可读取，未恢复") from exc
         self.init_workspace()
         self._recover_interrupted_runs()
+        self.init_learning()
         self.event("BackupRestored", details={"backup": name, "previous": previous["id"]})
         return {"message": "已恢复；恢复前数据另存为备份", "previous_backup": previous["id"]}
 
