@@ -9,9 +9,24 @@ import socket
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 
 
 MAX_FEED_BYTES = 2_000_000
+
+
+def published_time(value: str) -> str | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(value)
+        except (ValueError, TypeError, OverflowError):
+            return None
+    return parsed.astimezone().isoformat() if parsed.tzinfo else None
 
 
 def _public_url(url: str) -> str:

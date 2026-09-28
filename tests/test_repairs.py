@@ -137,3 +137,50 @@ class RepairTests(unittest.TestCase):
                 self.assertEqual(self.store.get("task", task["id"])["status"], "Blocked")
                 self.assertIn("DECISION_SENTINEL", prompts[0])
                 self.assertIn("RULE_SENTINEL", prompts[0])
+
+    def test_plan_revisions_preserve_order_and_running_work(self):
+        a, b = self.task("A"), self.task("B")
+        self.store.action("confirm_plan", {"task_ids": [a["id"], b["id"]]})
+        plan = self.store.action("revise_plan", {"task_ids": [b["id"], a["id"]]})
+        self.assertEqual(plan["task_ids"], [b["id"], a["id"]])
+        self.store.action("revise_plan", {"task_ids": [a["id"]]})
+        self.assertEqual(self.store.get("task", b["id"])["status"], "Inbox")
+        self.store.action("complete_task", {"id": a["id"]})
+        with self.assertRaises(ValueError):
+            self.store.action("revise_plan", {"task_ids": []})
+
+    def test_feed_preserves_publication_date_and_records_source_errors(self):
+        channel = self.store.action("create_channel", {"name": "feed", "sources": "https://example.com/feed"})
+        entries = [{"title": "old", "summary": "", "url": "https://example.com/a", "published": "Mon, 01 Jan 2024 00:00:00 GMT"}]
+        with patch("server.store.fetch_feed", return_value=entries):
+            self.store.action("refresh_channel", {"id": channel["id"]})
+        self.assertEqual(self.store.all("intelligence_item")[0]["published_at"][:10], "2024-01-01")
+        with patch("server.store.fetch_feed", side_effect=OSError("offline")):
+            result = self.store.action("refresh_channel", {"id": channel["id"]})
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertEqual(self.store.get("intelligence_channel", channel["id"])["last_refresh"]["errors"][0]["error"], "offline")
+
+    def test_archive_reopen_and_backup_restore_preserve_recovery_copy(self):
+        task = self.task("keep")
+        self.store.action("archive_task", {"id": task["id"]})
+        self.assertEqual(self.store.brief(), [])
+        with self.assertRaises(ValueError):
+            self.store.action("complete_task", {"id": task["id"]})
+        self.store.action("archive_task", {"id": task["id"], "restore": True})
+        self.store.action("complete_task", {"id": task["id"]})
+        self.store.action("reopen_task", {"id": task["id"]})
+        backup = self.store.action("create_backup", {})
+        later = self.task("later")
+        exported = self.store.action("export_data", {})
+        self.assertEqual(len(json.loads(Path(exported["path"]).read_text())["objects"]["task"]), 2)
+        result = self.store.action("restore_backup", {"id": backup["id"]})
+        self.assertIsNone(self.store.get("task", later["id"]))
+        self.assertIsNotNone(self.store.get("task", task["id"]))
+        self.store.action("restore_backup", {"id": result["previous_backup"]})
+        self.assertIsNotNone(self.store.get("task", later["id"]))
+        with self.assertRaises(ValueError):
+            self.store.action("restore_backup", {"id": "../test.sqlite3"})
+        self.store._active_jobs = 1
+        with self.assertRaisesRegex(ValueError, "等待"):
+            self.store.action("restore_backup", {"id": backup["id"]})
+        self.store._active_jobs = 0

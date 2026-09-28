@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Button, Empty, Panel, STATUS, PRIORITY, dateLabel, timeLabel } from '../ui.jsx'
 
-const tabs = [['all', '全部'], ['Running', '进行中'], ['Review', '待审核'], ['Done', '已完成'], ['Blocked', '已阻塞']]
+const tabs = [['all', '全部'], ['Running', '进行中'], ['Review', '待审核'], ['Done', '已完成'], ['Blocked', '已阻塞'], ['archived', '已归档']]
 
 export default function Tasks({ data, run, open, focus }) {
   const [tab, setTab] = useState('all')
   const [selectedId, select] = useState(focus || null)
   useEffect(() => { if (focus) select(focus) }, [focus])
-  const filtered = data.tasks.filter(task => tab === 'all' || task.status === tab)
+  const filtered = data.tasks.filter(task => tab === 'archived' ? !!task.archived_at : !task.archived_at && (tab === 'all' || task.status === tab))
   const selected = filtered.find(task => task.id === selectedId) || filtered[0]
   const project = data.projects.find(item => item.id === selected?.project_id)
   const runs = data.agent_runs.filter(item => item.task_id === selected?.id)
@@ -30,7 +30,7 @@ export default function Tasks({ data, run, open, focus }) {
           {runs.length > 0 && <div className="detail-section"><h3>Agent Run</h3><p className="notice">Codex 直接修改工作目录，结果审核不撤销已有改动。失败或取消后也请核对产物。</p>{runs.map(item => <div className="run-card" key={item.id}><strong>{item.agent_id}</strong><span>{item.status} · {timeLabel(item.started_at)}</span><p>{item.result || item.error || '正在执行，结果返回后进入审核。'}</p></div>)}</div>}
           {artifacts.length > 0 && <div className="detail-section"><h3>产物</h3>{artifacts.map(item => <div className="artifact-row" key={item.id}>{item.name} · {{ Created: '新建', Modified: '修改', Deleted: '删除' }[item.change] || '变更'}</div>)}</div>}
           <div className="detail-section"><h3>活动记录</h3>{events.length ? events.map(event => <div className="activity-row" key={event.id}><span>{timeLabel(event.created_at)}</span><span>{event.type}</span></div>) : <p>暂无活动。</p>}</div>
-          <div className="detail-actions wrap"><Button onClick={() => open('task-edit', selected)}>编辑任务</Button>{data.daily_plans.some(plan => plan.date === data.today && plan.confirmed_at) && selected.planned_date !== data.today && !['Done','Blocked'].includes(selected.status) && <Button onClick={() => run('add_to_today', { task_id: selected.id })}>加入今天</Button>}{selected.executor_type === 'self' && selected.status !== 'Done' && <Button variant="primary" onClick={() => run('complete_task', { id: selected.id })}>确认完成</Button>}{selected.executor_type === 'agent' && ['Inbox','Planned','Blocked'].includes(selected.status) && <Button variant="primary" onClick={() => run('start_agent', { task_id: selected.id })}>交给 Codex</Button>}{selected.executor_type === 'agent' && selected.status === 'Running' && runs[0] && <Button onClick={() => run('cancel_agent', { id: runs[0].id })}>取消执行</Button>}{selected.status === 'Done' && <Button onClick={() => open('knowledge', selected)}>沉淀为知识</Button>}</div>
+          <div className="detail-actions wrap"><Button onClick={() => open('task-edit', selected)}>编辑任务</Button>{!['Running','Review'].includes(selected.status) && <Button onClick={() => run('archive_task', { id: selected.id, restore: !!selected.archived_at })}>{selected.archived_at ? '取消归档' : '归档'}</Button>}{['Done','Blocked'].includes(selected.status) && <Button onClick={() => run('reopen_task', { id: selected.id })}>重新打开</Button>}{data.daily_plans.some(plan => plan.date === data.today && plan.confirmed_at) && selected.planned_date !== data.today && !['Done','Blocked'].includes(selected.status) && <Button onClick={() => run('add_to_today', { task_id: selected.id })}>加入今天</Button>}{!selected.archived_at && selected.executor_type === 'self' && ['Inbox','Planned','Running'].includes(selected.status) && <Button variant="primary" onClick={() => run('complete_task', { id: selected.id })}>确认完成</Button>}{!selected.archived_at && selected.executor_type === 'agent' && ['Inbox','Planned','Blocked'].includes(selected.status) && <Button variant="primary" onClick={() => run('start_agent', { task_id: selected.id })}>交给 Codex</Button>}{selected.executor_type === 'agent' && selected.status === 'Running' && runs[0] && <Button onClick={() => run('cancel_agent', { id: runs[0].id })}>取消执行</Button>}{selected.status === 'Done' && <Button onClick={() => open('knowledge', selected)}>沉淀为知识</Button>}</div>
         </> : <Empty title="选择一个任务" detail="任务详情、执行记录与产物会在这里呈现。" />}
       </Panel>
     </div>

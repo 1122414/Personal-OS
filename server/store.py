@@ -11,12 +11,13 @@ import subprocess
 import tempfile
 import threading
 import uuid
+from contextlib import closing
 from datetime import date, datetime
 from functools import wraps
 from pathlib import Path
 from typing import Any
 
-from .feeds import fetch_feed
+from .feeds import fetch_feed, published_time
 
 
 KINDS = (
@@ -98,6 +99,7 @@ class Store:
         self._processes: dict[str, subprocess.Popen] = {}
         self._workers: dict[str, threading.Thread] = {}
         self._stopping = False
+        self._active_jobs = 0
         self._recover_interrupted_runs()
 
     def close(self) -> None:
@@ -206,6 +208,7 @@ class Store:
             result["daily_logs"] = [self.log_view(log) for log in result["daily_logs"]]
             result["projects"] = [{**project, "pulse_stale": self.pulse_stale(project)} for project in result["projects"]]
             result["agent_runs"] = [{k: v for k, v in run.items() if k != "before_snapshot"} for run in result["agent_runs"]]
+            result["backups"] = self.backups()
             return result
 
     @synchronized
@@ -275,6 +278,12 @@ class Store:
                 "update_task": self.update_task,
                 "complete_task": self.complete_task,
                 "confirm_plan": self.confirm_plan,
+                "revise_plan": self.revise_plan,
+                "archive_task": self.archive_task,
+                "reopen_task": self.reopen_task,
+                "create_backup": self.create_backup,
+                "restore_backup": self.restore_backup,
+                "export_data": self.export_data,
                 "add_to_today": self.add_to_today,
                 "create_decision": self.create_decision,
                 "update_decision": self.update_decision,
@@ -304,7 +313,13 @@ class Store:
         if name not in dispatch:
             raise ValueError("未知操作")
         if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log"):
-            return dispatch[name](payload)
+            with self.lock:
+                self._active_jobs += 1
+            try:
+                return dispatch[name](payload)
+            finally:
+                with self.lock:
+                    self._active_jobs -= 1
         with self.lock:
             return dispatch[name](payload)
 
@@ -374,6 +389,8 @@ class Store:
 
     def complete_task(self, p: dict[str, Any]) -> dict[str, Any]:
         item = self._existing("task", p)
+        if item.get("archived_at"):
+            raise ValueError("请先取消归档")
         if item["executor_type"] == "agent":
             raise ValueError("Agent 任务必须经过审核")
         if item["status"] not in ("Inbox", "Planned", "Running"):
@@ -392,7 +409,7 @@ class Store:
         if not isinstance(task_ids, list) or len(task_ids) != len(set(task_ids)):
             raise ValueError("计划任务无效")
         tasks = [self.get("task", task_id) for task_id in task_ids]
-        if any(task is None or task["status"] in ("Done", "Blocked") for task in tasks):
+        if any(task is None or task.get("archived_at") or task["status"] in ("Done", "Blocked") for task in tasks):
             raise ValueError("计划包含不存在或不能安排的任务")
         plan = next((x for x in self.all("daily_plan") if x["date"] == day), None)
         if plan and plan.get("confirmed_at"):
@@ -408,7 +425,7 @@ class Store:
 
     def add_to_today(self, p: dict[str, Any]) -> dict[str, Any]:
         task = self.get("task", p.get("task_id") or "")
-        if not task or task["status"] in ("Done", "Blocked"):
+        if not task or task.get("archived_at") or task["status"] in ("Done", "Blocked"):
             raise ValueError("任务不存在或当前不能安排")
         plan = next((x for x in self.all("daily_plan") if x["date"] == local_day() and x.get("confirmed_at")), None)
         if not plan:
@@ -422,6 +439,115 @@ class Store:
         task = self.put("task", task)
         self.event("TaskAddedToToday", "task", task["id"], task.get("project_id"), {"title": task["title"]})
         return task
+
+    def revise_plan(self, p: dict[str, Any]) -> dict[str, Any]:
+        plan = next((x for x in self.all("daily_plan") if x["date"] == local_day()), None)
+        if not plan:
+            return self.confirm_plan(p)
+        ids = p.get("task_ids")
+        if not isinstance(ids, list) or any(not isinstance(x, str) for x in ids) or len(set(ids)) != len(ids):
+            raise ValueError("计划任务无效")
+        tasks = [self.get("task", task_id) for task_id in ids]
+        if any(not task or task.get("archived_at") or (task["status"] in ("Done", "Blocked") and task["id"] not in plan["task_ids"]) for task in tasks):
+            raise ValueError("计划包含不能安排的任务")
+        removed = [self.get("task", task_id) for task_id in plan["task_ids"] if task_id not in ids]
+        if any(task and task["status"] in ("Running", "Review", "Done") for task in removed):
+            raise ValueError("执行中、待审核或已完成任务需要保留在当天记录中")
+        for task in removed:
+            if task and task.get("planned_date") == local_day():
+                task["planned_date"] = None
+                if task["status"] == "Planned":
+                    task["status"] = "Inbox"
+                self.put("task", task)
+        previous = list(plan["task_ids"])
+        for task in tasks:
+            task["planned_date"] = local_day()
+            if task["status"] == "Inbox":
+                task["status"] = "Planned"
+            self.put("task", task)
+        plan["task_ids"] = ids
+        plan = self.put("daily_plan", plan)
+        self.event("DailyPlanRevised", "daily_plan", plan["id"], details={"previous_task_ids": previous, "task_ids": ids})
+        return plan
+
+    def archive_task(self, p: dict[str, Any]) -> dict[str, Any]:
+        task = self._existing("task", p)
+        if task["status"] in ("Running", "Review"):
+            raise ValueError("请先停止执行或处理审核")
+        task["archived_at"] = None if p.get("restore") else stamp()
+        task = self.put("task", task)
+        self.event("TaskRestored" if p.get("restore") else "TaskArchived", "task", task["id"], task.get("project_id"), {"title": task["title"]})
+        return task
+
+    def reopen_task(self, p: dict[str, Any]) -> dict[str, Any]:
+        task = self._existing("task", p)
+        if task["status"] not in ("Done", "Blocked"):
+            raise ValueError("只能重新打开已完成或阻塞任务")
+        task.update(status="Inbox", planned_date=None, archived_at=None, review_status=None)
+        task.pop("completed_at", None)
+        task = self.put("task", task)
+        self.event("TaskReopened", "task", task["id"], task.get("project_id"), {"title": task["title"]})
+        return task
+
+    def backups(self) -> list[dict[str, str]]:
+        return [{"id": path.name, "size": path.stat().st_size} for path in sorted((self.path.parent / "backups").glob("backup-*.sqlite3"), reverse=True) if not path.is_symlink()]
+
+    def export_data(self, p: dict[str, Any]) -> dict[str, Any]:
+        folder = self.path.parent / "exports"
+        folder.mkdir(exist_ok=True)
+        if folder.is_symlink():
+            raise ValueError("导出目录不能是符号链接")
+        destination = folder / f"personal-os-{identifier()}.json"
+        objects = {kind: self.all(kind) for kind in KINDS}
+        objects["agent_run"] = [{k: v for k, v in run.items() if k != "before_snapshot"} for run in objects["agent_run"]]
+        events = [dict(row) for row in self.db.execute("SELECT * FROM activity ORDER BY created_at")]
+        for event in events:
+            event["details"] = json.loads(event["details"])
+        with destination.open("x", encoding="utf-8") as stream:
+            json.dump({"version": 1, "objects": objects, "events": events}, stream, ensure_ascii=False, indent=2)
+        destination.chmod(0o600)
+        return {"path": str(destination), "message": "JSON 导出已保存到本机"}
+
+    def create_backup(self, p: dict[str, Any]) -> dict[str, Any]:
+        folder = self.path.parent / "backups"
+        folder.mkdir(exist_ok=True)
+        if folder.is_symlink():
+            raise ValueError("备份目录不能是符号链接")
+        destination = folder / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{identifier()[:8]}.sqlite3"
+        with closing(sqlite3.connect(destination)) as target:
+            self.db.backup(target)
+            target.execute("PRAGMA journal_mode=DELETE")
+        destination.chmod(0o600)
+        return {"id": destination.name, "path": str(destination), "message": "本地备份已创建"}
+
+    def restore_backup(self, p: dict[str, Any]) -> dict[str, Any]:
+        if self._workers or self._active_jobs:
+            raise ValueError("请等待执行、同步或 AI 生成结束后再恢复")
+        name = p.get("id", "")
+        if not isinstance(name, str) or not re.fullmatch(r"backup-\d{8}-\d{6}-[a-f0-9]{8}\.sqlite3", name):
+            raise ValueError("备份名称无效")
+        folder = self.path.parent / "backups"
+        source = folder / name
+        if folder.is_symlink() or source.is_symlink() or not source.is_file():
+            raise ValueError("备份不存在或路径无效")
+        try:
+            with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as original:
+                if original.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise ValueError("备份完整性检查失败")
+                for kind, object_id, raw in original.execute("SELECT kind,id,data FROM objects"):
+                    item = json.loads(raw)
+                    if kind not in KINDS or not isinstance(item, dict) or item.get("id") != object_id:
+                        raise ValueError("备份对象格式不兼容")
+                original.execute("SELECT id,type,details,created_at FROM activity LIMIT 1")
+                if not original.execute("SELECT 1 FROM objects WHERE kind='settings' AND id='settings'").fetchone():
+                    raise ValueError("备份缺少设置")
+                previous = self.create_backup({})
+                original.backup(self.db)
+        except (sqlite3.DatabaseError, json.JSONDecodeError) as exc:
+            raise ValueError("备份格式不可读取，未恢复") from exc
+        self._recover_interrupted_runs()
+        self.event("BackupRestored", details={"backup": name, "previous": previous["id"]})
+        return {"message": "已恢复；恢复前数据另存为备份", "previous_backup": previous["id"]}
 
     def create_decision(self, p: dict[str, Any]) -> dict[str, Any]:
         project_id = p.get("project_id") or None
@@ -544,7 +670,8 @@ class Store:
             "summary": (p.get("summary") or "").strip()[:5000],
             "why_recommended": required_text(p.get("why_recommended"), "推荐原因", 1000),
             "channel_id": channel["id"], "project_id": p.get("project_id") or None,
-            "published_at": p.get("published_at") or stamp(),
+            "published_at": p["published_at"] if "published_at" in p else stamp(),
+            "fetched_at": stamp(),
             "feedback": "unread",
         })
         self.event("IntelligenceItemAdded", "intelligence_item", item["id"], item.get("project_id"), {"title": item["title"]})
@@ -582,7 +709,7 @@ class Store:
         if not source_urls:
             raise ValueError("请先为频道设置 RSS/Atom 来源地址，每行一个")
         existing = self.all("intelligence_item")
-        known_urls = {item.get("url") for item in existing}
+        known_urls = {item.get("url") for item in existing if item["channel_id"] == channel["id"]}
         today_count = sum(1 for item in existing if item["channel_id"] == channel["id"] and item["created_at"][:10] == local_day())
         remaining = max(0, channel["daily_limit"] - today_count)
         if not remaining:
@@ -614,11 +741,13 @@ class Store:
                 self.create_intelligence({
                     "title": entry["title"], "source": source_name, "url": entry["url"],
                     "summary": entry["summary"], "why_recommended": reason,
-                    "channel_id": channel["id"], "published_at": stamp(),
+                    "channel_id": channel["id"], "published_at": published_time(entry.get("published", "")),
                 })
                 known_urls.add(entry["url"])
                 added += 1
-        self.event("IntelligenceChannelRefreshed", "intelligence_channel", channel["id"], details={"added": added, "sources": len(source_urls)})
+        channel["last_refresh"] = {"at": stamp(), "added": added, "errors": errors}
+        self.put("intelligence_channel", channel)
+        self.event("IntelligenceChannelRefreshed", "intelligence_channel", channel["id"], details={"added": added, "sources": len(source_urls), "failed_sources": len(errors)})
         return {"added": added, "errors": errors}
 
     def create_rule(self, p: dict[str, Any]) -> dict[str, Any]:
@@ -752,6 +881,8 @@ class Store:
         task = self.get("task", p.get("task_id") or "")
         if not task:
             raise ValueError("任务不存在")
+        if task.get("archived_at"):
+            raise ValueError("请先取消归档")
         if task["status"] not in ("Inbox", "Planned", "Blocked", "Review"):
             raise ValueError("当前任务不能启动 Agent")
         if not shutil.which("codex"):
