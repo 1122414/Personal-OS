@@ -1,0 +1,258 @@
+"""User-owned records, learning topics and original materials.
+
+Attachments live in SQLite so the existing backup/restore contract stays complete.
+No operation in this module starts an agent or reads an external URL.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import re
+from pathlib import Path
+from urllib.parse import urlparse
+
+from .common import identifier, required_text, stamp, synchronized
+
+WORKSPACE_KINDS = ("record", "material", "learning_topic")
+WORKSPACE_ACTIONS = (
+    "create_record", "update_record", "add_material", "create_learning_topic",
+    "update_learning_topic", "link_record", "record_to_task", "export_workspace_note",
+)
+RECORD_TYPES = {"note", "idea", "resource", "status"}
+MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
+
+def optional_text(value, field, limit=10000, strip=True):
+    if value is None:
+        return ""
+    if not isinstance(value, str) or len(value) > limit:
+        raise ValueError(f"{field} 格式无效或过长")
+    return value.strip() if strip else value
+
+
+def web_url(value):
+    url = required_text(value, "链接", 4000)
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("仅支持不含登录凭据的 HTTP(S) 链接")
+    try:
+        parsed.port
+    except ValueError:
+        raise ValueError("链接端口无效") from None
+    return url
+
+
+def file_type(body):
+    if body.startswith(b"%PDF-"):
+        return "application/pdf", ".pdf"
+    if body.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", ".png"
+    if body.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", ".jpg"
+    if body[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif", ".gif"
+    if body.startswith(b"RIFF") and body[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    raise ValueError("仅支持 PDF、PNG、JPEG、GIF、WebP 原文件")
+
+
+def check_version(item, p):
+    if p.get("expected_updated_at") != item["updated_at"]:
+        raise ValueError("内容已在别处修改，请重新打开后核对；当前输入仍保留")
+
+
+class WorkspaceMixin:
+    def init_workspace(self):
+        self.db.execute("CREATE TABLE IF NOT EXISTS material_blobs (id TEXT PRIMARY KEY, body BLOB NOT NULL)")
+        self.db.commit()
+
+    def create_record(self, p):
+        content = optional_text(p.get("content"), "记录", 100000, strip=False)
+        title = optional_text(p.get("title"), "标题", 200)
+        if not content.strip() and not title:
+            raise ValueError("请写下一点内容，或用文件名作为标题")
+        record_type = p.get("record_type") or "note"
+        if record_type not in RECORD_TYPES:
+            raise ValueError("记录类型无效")
+        item = self.put("record", {
+            "title": title or content.strip().splitlines()[0][:80], "content": content,
+            "original_content": content, "record_type": record_type,
+            "revision": 1, "created_by": "user", "task_id": None,
+            "recall_policy": "normal",
+        })
+        self.event("RecordCreated", "record", item["id"], details={"title": item["title"]})
+        return item
+
+    def update_record(self, p):
+        item = self._existing("record", p)
+        check_version(item, p)
+        for field, limit in (("content", 100000), ("title", 200)):
+            if field in p:
+                item[field] = optional_text(p[field], field, limit, strip=field != "content")
+        if not item["title"] and not item["content"].strip():
+            raise ValueError("记录不能完全为空")
+        item["title"] = item["title"] or item["content"].strip().splitlines()[0][:80]
+        if "record_type" in p:
+            if p["record_type"] not in RECORD_TYPES:
+                raise ValueError("记录类型无效")
+            item["record_type"] = p["record_type"]
+        item["revision"] += 1
+        saved = self.put("record", item)
+        self.event("RecordUpdated", "record", item["id"], details={"title": item["title"]})
+        return saved
+
+    def add_material(self, p):
+        record = self._existing("record", {"id": p.get("record_id")})
+        material = {"record_id": record["id"], "read_status": "saved", "revision": 1,
+                    "read_note": "原件已保存，尚未解析或交给 Agent", "used_in": []}
+        body = None
+        if p.get("url"):
+            material.update({"kind": "link", "url": web_url(p["url"]),
+                             "name": optional_text(p.get("name"), "资料名称", 200) or p["url"][:200]})
+        else:
+            encoded = p.get("base64")
+            if not isinstance(encoded, str) or len(encoded) > (MAX_ATTACHMENT_BYTES + 2) // 3 * 4:
+                raise ValueError("每个附件不得超过 20 MB")
+            try:
+                body = base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error):
+                raise ValueError("附件编码无效") from None
+            if not body or len(body) > MAX_ATTACHMENT_BYTES:
+                raise ValueError("附件为空或超过 20 MB")
+            mime, extension = file_type(body)
+            name = required_text(p.get("name"), "文件名", 200)
+            name = re.sub(r"[\x00-\x1f/\\]", "_", name)
+            material.update({"kind": "pdf" if mime == "application/pdf" else "image", "mime": mime,
+                             "extension": extension, "name": name, "size": len(body),
+                             "sha256": hashlib.sha256(body).hexdigest()})
+        material["id"] = identifier()
+        # put commits both the pending blob and its metadata in one transaction.
+        if body is not None:
+            self.db.execute("INSERT INTO material_blobs VALUES(?, ?)", (material["id"], body))
+        try:
+            saved = self.put("material", material)
+        except Exception:
+            self.db.rollback()
+            raise
+        self.event("MaterialSaved", "record", record["id"], details={"material_id": saved["id"], "title": saved["name"]})
+        return saved
+
+    @synchronized
+    def material_original(self, material_id):
+        material = self._existing("material", {"id": material_id})
+        row = self.db.execute("SELECT body FROM material_blobs WHERE id=?", (material_id,)).fetchone()
+        if row is None:
+            raise ValueError("原文件不存在；链接资料请访问原网址")
+        return material, bytes(row[0])
+
+    def export_blobs(self):
+        return [{"id": row[0], "base64": base64.b64encode(row[1]).decode("ascii")}
+                for row in self.db.execute("SELECT id,body FROM material_blobs")]
+
+    def create_learning_topic(self, p):
+        record = self._existing("record", {"id": p["record_id"]}) if p.get("record_id") else None
+        title = required_text(p.get("title") or (record and record["title"]), "主题标题", 200)
+        mode = p.get("mode") or "guided"
+        if mode not in ("quick", "guided"):
+            raise ValueError("学习方式无效")
+        item = self.put("learning_topic", {
+            "title": title, "goal": optional_text(p.get("goal"), "学习目标", 3000),
+            "mode": mode, "agent": "codex", "record_ids": [record["id"]] if record else [],
+            "native_session_id": None, "revision": 1,
+        })
+        self.event("LearningTopicCreated", "learning_topic", item["id"], details={"title": title})
+        return item
+
+    def update_learning_topic(self, p):
+        item = self._existing("learning_topic", p)
+        check_version(item, p)
+        if "title" in p:
+            item["title"] = required_text(p["title"], "主题标题", 200)
+        if "goal" in p:
+            item["goal"] = optional_text(p["goal"], "学习目标", 3000)
+        if "mode" in p:
+            if p["mode"] not in ("guided", "quick"):
+                raise ValueError("学习方式无效")
+            item["mode"] = p["mode"]
+        if p.get("agent", "codex") != "codex":
+            raise ValueError("当前仅接入 Codex，不会自动切换 Agent")
+        item["revision"] += 1
+        return self.put("learning_topic", item)
+
+    def link_record(self, p):
+        topic = self._existing("learning_topic", p)
+        record = self._existing("record", {"id": p.get("record_id")})
+        ids = topic["record_ids"]
+        if p.get("remove"):
+            ids = [item for item in ids if item != record["id"]]
+        elif record["id"] not in ids:
+            ids = [*ids, record["id"]]
+        if ids != topic["record_ids"]:
+            topic.update(record_ids=ids, revision=topic["revision"] + 1)
+            topic = self.put("learning_topic", topic)
+        return topic
+
+    def record_to_task(self, p):
+        record = self._existing("record", p)
+        if record.get("task_id") and self.get("task", record["task_id"]):
+            return self.get("task", record["task_id"])
+        task = self.create_task({"title": p.get("title") or record["title"], "description": record["content"],
+                                 "project_id": p.get("project_id"), "source": "Manual"})
+        task["record_id"] = record["id"]
+        task = self.put("task", task)
+        record["task_id"] = task["id"]
+        self.put("record", record)
+        return task
+
+    @synchronized
+    def workspace_markdown(self, kind, object_id):
+        if kind not in ("record", "learning_topic"):
+            raise ValueError("导出类型无效")
+        item = self._existing(kind, {"id": object_id})
+        text = f"# {item['title']}\n\n"
+        if kind == "record":
+            text += item["content"] + "\n"
+            materials = [m for m in self.all("material") if m["record_id"] == object_id]
+        else:
+            text += item["goal"] + "\n"
+            materials = [m for m in self.all("material") if m["record_id"] in item["record_ids"]]
+            for rid in item["record_ids"]:
+                record = self.get("record", rid)
+                if record:
+                    text += f"\n## 相关记录：{record['title']}\n\n{record['content']}\n"
+        for material in materials:
+            name = material["name"].replace("[", "\\[").replace("]", "\\]")
+            target = material.get("url") or f"{material['id']}{material['extension']}"
+            text += f"\n- [{name}](<{target}>) — {material['read_note']}\n"
+        text += f"\n---\n主版本：Personal OS · {kind}/{object_id}\n记录时间：{item['created_at']}\n导出时间：{stamp()}\n"
+        return item, text, materials
+
+    def export_workspace_note(self, p):
+        item, text, materials = self.workspace_markdown(p.get("kind", "record"), p.get("id"))
+        if p.get("destination") == "obsidian":
+            vault = self.get("settings", "settings").get("obsidian_vault")
+            if not vault or not Path(vault).is_dir():
+                raise ValueError("请先在设置中配置 Obsidian 仓库")
+            root = Path(vault).resolve()
+            folder = root / "Personal-OS"
+            if folder.is_symlink():
+                raise ValueError("导出目录不能是符号链接")
+        else:
+            root = self.path.parent.resolve()
+            folder = root / "exports"
+        if folder.is_symlink():
+            raise ValueError("导出目录不能是符号链接")
+        folder.mkdir(exist_ok=True)
+        bundle = folder / f"note-{identifier()}"
+        bundle.mkdir(mode=0o700)
+        name = re.sub(r"[\x00-\x1f/\\:*?\"<>|]", "_", item["title"])[:80].strip(". ") or "记录"
+        destination = bundle / f"{name}.md"
+        with destination.open("x", encoding="utf-8") as stream:
+            stream.write(text)
+        for material in materials:
+            if material["kind"] != "link":
+                _, body = self.material_original(material["id"])
+                (bundle / f"{material['id']}{material['extension']}").write_bytes(body)
+        return {"path": str(destination), "message": "已导出 Markdown 和原附件；Personal OS 仍为主版本"}

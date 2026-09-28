@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .store import Store, local_day, stamp
 from .reports import read_report
+from .workspace import MAX_ATTACHMENT_BYTES
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -77,6 +78,20 @@ def make_handler(store: Store, static_root: Path):
                 return
             if route == "/api/health":
                 self._json(200, {"status": "ok"})
+                return
+            if route.startswith("/api/material/"):
+                try:
+                    material, body = store.material_original(route.removeprefix("/api/material/"))
+                    self.send_response(200)
+                    self.send_header("Content-Type", material["mime"])
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Content-Disposition", f'inline; filename="{material["id"]}{material["extension"]}"')
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+                except ValueError as exc:
+                    self._json(404, {"error": str(exc)})
                 return
             if route == "/api/obsidian/report":
                 try:
@@ -143,7 +158,8 @@ def make_handler(store: Store, static_root: Path):
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if length < 0 or length > MAX_BODY_BYTES:
+                limit = MAX_ATTACHMENT_BYTES * 4 // 3 + 10000 if route == "/api/action/add_material" else MAX_BODY_BYTES
+                if length < 0 or length > limit:
                     raise ValueError("请求内容过大")
                 data = json.loads(self.rfile.read(length))
                 result = store.action(route.removeprefix("/api/action/"), data)

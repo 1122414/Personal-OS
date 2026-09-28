@@ -13,10 +13,11 @@ import threading
 import uuid
 from contextlib import closing
 from datetime import date, datetime, timedelta
-from functools import wraps
 from pathlib import Path
 from typing import Any
 
+from .common import stamp, local_day, past_or_today, identifier, required_text, synchronized
+from .workspace import WorkspaceMixin, WORKSPACE_KINDS, WORKSPACE_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
@@ -26,7 +27,7 @@ KINDS = (
     "project", "task", "daily_plan", "daily_log", "decision", "agent_run",
     "artifact", "intelligence_channel", "intelligence_item", "personal_rule",
     "knowledge_proposal", "daily_brief", "settings",
-)
+) + WORKSPACE_KINDS
 TASK_STATES = {"Inbox", "Planned", "Running", "Review", "Done", "Blocked"}
 TASK_SOURCES = {"Manual", "Morning Brief", "Intelligence", "Project", "Agent Suggestion", "Yesterday Carryover"}
 DEFAULT_SETTINGS = {
@@ -37,46 +38,9 @@ DEFAULT_SETTINGS = {
 }
 
 
-def stamp() -> str:
-    return datetime.now().astimezone().isoformat(timespec="microseconds")
 
 
-def local_day() -> str:
-    return date.today().isoformat()
-
-
-def past_or_today(value: Any) -> str:
-    try:
-        day = date.fromisoformat(value)
-    except (ValueError, TypeError):
-        raise ValueError("日期格式必须为 YYYY-MM-DD") from None
-    if day > date.today():
-        raise ValueError("不能选择未来日期")
-    return day.isoformat()
-
-
-def identifier() -> str:
-    return uuid.uuid4().hex
-
-
-def required_text(value: Any, field: str, limit: int = 500) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field} 不能为空")
-    text = value.strip()
-    if len(text) > limit:
-        raise ValueError(f"{field} 过长")
-    return text
-
-
-def synchronized(method):
-    @wraps(method)
-    def guarded(self, *args, **kwargs):
-        with self.lock:
-            return method(self, *args, **kwargs)
-    return guarded
-
-
-class Store:
+class Store(WorkspaceMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -98,6 +62,7 @@ class Store:
             );
             CREATE INDEX IF NOT EXISTS activity_time ON activity(created_at);
         """)
+        self.init_workspace()
         if not self.get("settings", "settings"):
             self.put("settings", {"id": "settings", **DEFAULT_SETTINGS})
         self._processes: dict[str, subprocess.Popen] = {}
@@ -328,6 +293,7 @@ class Store:
                 "generate_project_pulse": self.generate_project_pulse,
                 "summarize_log": self.summarize_log,
         }
+        dispatch.update({operation: getattr(self, operation) for operation in WORKSPACE_ACTIONS})
         if name not in dispatch:
             raise ValueError("未知操作")
         if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy"):
@@ -526,7 +492,7 @@ class Store:
         for event in events:
             event["details"] = json.loads(event["details"])
         with destination.open("x", encoding="utf-8") as stream:
-            json.dump({"version": 1, "objects": objects, "events": events}, stream, ensure_ascii=False, indent=2)
+            json.dump({"version": 2, "objects": objects, "events": events, "attachments": self.export_blobs()}, stream, ensure_ascii=False, indent=2)
         destination.chmod(0o600)
         return {"path": str(destination), "message": "JSON 导出已保存到本机"}
 
@@ -567,6 +533,7 @@ class Store:
                 original.backup(self.db)
         except (sqlite3.DatabaseError, json.JSONDecodeError) as exc:
             raise ValueError("备份格式不可读取，未恢复") from exc
+        self.init_workspace()
         self._recover_interrupted_runs()
         self.event("BackupRestored", details={"backup": name, "previous": previous["id"]})
         return {"message": "已恢复；恢复前数据另存为备份", "previous_backup": previous["id"]}

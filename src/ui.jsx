@@ -2,6 +2,8 @@ import React from 'react'
 
 export const NAV = [
   ['today', '⌂', '首页', 'Today'],
+  ['records', '▤', '记录', 'Records'],
+  ['learning', '▥', '学习', 'Learning'],
   ['tasks', '☑', '任务', 'Tasks'],
   ['projects', '◇', '项目', 'Projects'],
   ['intelligence', '◎', '情报', 'Intelligence'],

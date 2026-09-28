@@ -8,6 +8,8 @@ import Intelligence from './pages/Intelligence.jsx'
 import Review from './pages/Review.jsx'
 import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
+import Records from './pages/Records.jsx'
+import Learning from './pages/Learning.jsx'
 
 function themeByTime() {
   const hour = new Date().getHours()
@@ -20,7 +22,7 @@ function initialPage() {
 }
 
 const pageTitles = {
-  today: '早上好', tasks: '任务', projects: '项目', intelligence: '情报',
+  today: '早上好', records: '记录', learning: '学习', tasks: '任务', projects: '项目', intelligence: '情报',
   review: '审核', history: '历史', settings: '设置',
 }
 
@@ -108,7 +110,7 @@ function FormModal({ modal, data, run, close }) {
 export default function App() {
   const [data, setData] = useState(null)
   const [page, setPage] = useState(initialPage)
-  const [focus, setFocus] = useState(null)
+  const [focus, setFocus] = useState(() => window.location.hash.split('/')[1] || null)
   const [modal, setModal] = useState(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState(null)
@@ -146,17 +148,21 @@ export default function App() {
   }
 
   const matches = useMemo(() => !search.trim() || !data ? [] : [
+    ...(data.records || []).filter(item => `${item.title} ${item.content}`.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'records', label: '记录' })),
+    ...(data.learning_topics || []).filter(item => `${item.title} ${item.goal}`.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'learning', label: '学习' })),
     ...data.tasks.filter(item => item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'tasks', label: '任务' })),
     ...data.projects.filter(item => item.name.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'projects', title: item.name, label: '项目' })),
   ], [search, data])
 
   const transparency = previewTransparency ?? settings.theme_transparency ?? 8
   return <div className={`app-shell theme-${theme}`} style={{ '--surface-alpha': (100 - transparency) / 100 }}>
-    <aside className="sidebar"><div className="brand"><div className="brand-mark">♆</div><div><strong>Personal OS</strong><small>ABYSS CALLS · BUT ALSO HEALS</small></div></div><nav aria-label="主导航">{NAV.map(([key, icon, label, english], index) => <button key={key} className={`nav-item ${page === key ? 'active' : ''} ${index === 6 ? 'settings-nav' : ''}`} onClick={() => navigate(key)}><span className="nav-icon">{icon}</span><span>{label}<small>{english}</small></span></button>)}</nav><div className="sidebar-quote"><span>✧</span><p>在混沌中，仍然前行。</p><small>PERSONAL OS · A MORE FOCUSED YOU</small></div></aside>
-    <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索任务、项目标题，或填写新任务标题…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
-      <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1><p>{page === 'today' ? '今天值得推进的事，正在这里等你确认。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
+    <aside className="sidebar"><div className="brand"><div className="brand-mark">♆</div><div><strong>Personal OS</strong><small>ABYSS CALLS · BUT ALSO HEALS</small></div></div><nav aria-label="主导航">{NAV.map(([key, icon, label, english], index) => <button key={key} aria-label={label} className={`nav-item ${page === key ? 'active' : ''} ${key === 'settings' ? 'settings-nav' : ''}`} onClick={() => navigate(key)}><span className="nav-icon">{icon}</span><span>{label}<small>{english}</small></span></button>)}</nav><div className="sidebar-quote"><span>✧</span><p>在混沌中，仍然前行。</p><small>PERSONAL OS · A MORE FOCUSED YOU</small></div></aside>
+    <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索记录、主题、任务…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
+      <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1><p>{page === 'today' ? '先记下来，再继续一件重要的事。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
       <main className="content">{loading ? <div className="loading">正在读取工作空间…</div> : !data ? <div className="loading">无法连接本地服务。请启动 Python API。</div> : <>
         {page === 'today' && <Today data={data} run={run} open={open} navigate={navigate} />}
+        {page === 'records' && <Records data={data} run={run} focus={focus} navigate={navigate} />}
+        {page === 'learning' && <Learning data={data} run={run} focus={focus} navigate={navigate} />}
         {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}
         {page === 'projects' && <Projects data={data} run={run} open={open} focus={focus} navigate={navigate} />}
         {page === 'intelligence' && <Intelligence data={data} run={run} open={open} focus={focus} refresh={refresh} navigate={navigate} />}
