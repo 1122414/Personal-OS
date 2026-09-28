@@ -26,7 +26,7 @@ export default function Today({ data, run, open, navigate }) {
   }
 
   return <div className="page today-page">
-    <div className="page-intro"><span>{dateLabel(data.today)}</span><span>{mode === 'plan' ? '规划今天' : mode === 'review' ? '回顾今天' : '专注执行'}</span></div>
+    <div className="page-intro"><span>{dateLabel(data.today)}</span><span>{mode === 'plan' ? '规划今天' : mode === 'review' ? '回顾今天' : '专注执行'}</span>{data.tasks.some(task => task.status === 'Blocked' && !task.archived_at) && <Button onClick={() => navigate('tasks', data.tasks.find(task => task.status === 'Blocked' && !task.archived_at).id)}>有阻塞任务需要处理 →</Button>}</div>
     {!plan ? <Panel className="brief-panel feature-panel" title="今日简报" action={<span className="overline">MORNING BRIEF</span>}>
       <div className="brief-lead"><h2>今天最值得推进的事</h2><p>从未完成任务、截止日期与项目上下文整理。请调整后确认。</p></div>
       {tasks.length ? <div className="priority-list">{tasks.map((task, index) => {

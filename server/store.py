@@ -40,6 +40,16 @@ def local_day() -> str:
     return date.today().isoformat()
 
 
+def past_or_today(value: Any) -> str:
+    try:
+        day = date.fromisoformat(value)
+    except (ValueError, TypeError):
+        raise ValueError("日期格式必须为 YYYY-MM-DD") from None
+    if day > date.today():
+        raise ValueError("不能选择未来日期")
+    return day.isoformat()
+
+
 def identifier() -> str:
     return uuid.uuid4().hex
 
@@ -184,7 +194,7 @@ class Store:
 
     def state(self) -> dict[str, Any]:
         with self.lock:
-            return {
+            result = {
                 **{kind + "s": self.all(kind) for kind in KINDS if kind != "settings"},
                 "settings": self.get("settings", "settings"),
                 "events": self.events(),
@@ -192,13 +202,52 @@ class Store:
                 "brief": self.brief(),
                 "runtime": {"codex_available": bool(shutil.which("codex"))},
             }
+            result["history_dates"] = self.history_dates()
+            result["daily_logs"] = [self.log_view(log) for log in result["daily_logs"]]
+            result["projects"] = [{**project, "pulse_stale": self.pulse_stale(project)} for project in result["projects"]]
+            result["agent_runs"] = [{k: v for k, v in run.items() if k != "before_snapshot"} for run in result["agent_runs"]]
+            return result
+
+    @synchronized
+    def history_dates(self) -> list[str]:
+        days = {row[0] for row in self.db.execute("SELECT DISTINCT substr(created_at,1,10) FROM activity")}
+        days.update(log["date"] for log in self.all("daily_log"))
+        return sorted(days | {local_day()}, reverse=True)
+
+    @synchronized
+    def history(self, day: str) -> dict[str, Any]:
+        day = past_or_today(day)
+        log = next((x for x in self.all("daily_log") if x["date"] == day), None)
+        return {"date": day, "events": self.events(day), "log": self.log_view(log) if log else None}
+
+    def log_events(self, day: str) -> list[dict[str, Any]]:
+        return [event for event in self.events(day) if event["type"].startswith(
+            ("Task", "Agent", "Artifact", "Decision", "Obsidian", "DailyPlan", "ExternalRecord"))]
+
+    def log_view(self, log: dict[str, Any]) -> dict[str, Any]:
+        known = set(log.get("source_event_ids", []))
+        stale = any(event["id"] not in known for event in self.log_events(log["date"]))
+        return {**log, "stale": stale, "latest_source_event_ids": [e["id"] for e in self.log_events(log["date"])]}
+
+    def pulse_stale(self, project: dict[str, Any]) -> bool:
+        generated = project.get("pulse_generated_at")
+        if not generated:
+            return True
+        latest = self.db.execute(
+            "SELECT max(created_at) FROM activity WHERE project_id=? AND type NOT IN ('ProjectPulseGenerated','ProjectPulseFailed')",
+            (project["id"],),
+        ).fetchone()[0]
+        return bool(latest and latest > generated)
 
     def brief(self) -> list[dict[str, Any]]:
         today = local_day()
         generated = next((x for x in self.all("daily_brief") if x["date"] == today), None)
         if generated:
-            return generated["priorities"]
-        tasks = [t for t in self.all("task") if t["status"] not in ("Done", "Blocked")]
+            valid = {t["id"]: t for t in self.all("task") if t["status"] in ("Inbox", "Planned") and not t.get("archived_at")}
+            choices = [{**item, "title": valid[item["task_id"]]["title"]} for item in generated["priorities"] if item["task_id"] in valid]
+            if choices:
+                return choices
+        tasks = [t for t in self.all("task") if t["status"] in ("Inbox", "Planned") and not t.get("archived_at")]
         tasks.sort(key=lambda t: (
             t.get("deadline") or "9999-12-31",
             0 if t.get("priority") == "High" else 1,
@@ -277,6 +326,9 @@ class Store:
         if item["status"] not in ("Active", "Paused", "Completed"):
             raise ValueError("项目状态无效")
         item["name"] = required_text(item["name"], "项目名称", 120)
+        if "pulse" in p:
+            item["pulse_manual"] = True
+            item["pulse_generated_at"] = stamp()
         item = self.put("project", item)
         self.event("ProjectUpdated", "project", item["id"], item["id"], {"name": item["name"]})
         return item
@@ -397,21 +449,25 @@ class Store:
         return item
 
     def draft_log(self, p: dict[str, Any]) -> dict[str, Any]:
-        day = p.get("date") or local_day()
-        if day != local_day():
-            raise ValueError("只能生成今天的日报")
+        day = past_or_today(p.get("date") or local_day())
         log = next((x for x in self.all("daily_log") if x["date"] == day), None)
         if log and log.get("confirmed_at"):
             raise ValueError("日报已经确认")
         if log and not p.get("regenerate"):
             return log
-        self.scan_obsidian({"date": day})
-        events = self.events(day)
+        if day == local_day():
+            self.scan_obsidian({"date": day})
+        events = self.log_events(day)
         done = [e["details"].get("title", "任务") for e in reversed(events) if e["type"] == "TaskCompleted"]
         decisions = [e["details"].get("title", "决策") for e in reversed(events) if e["type"] == "DecisionCreated"]
         artifact_names = [e["details"].get("name", "产物") for e in reversed(events) if e["type"] == "ArtifactCreated"]
         changed_notes = [e["details"].get("path", "笔记") for e in reversed(events) if e["type"] == "ObsidianFileChanged"]
-        unfinished = [t["title"] for t in self.all("task") if t.get("planned_date") == day and t["status"] not in ("Done", "Blocked")]
+        plan = next((x for x in self.all("daily_plan") if x["date"] == day), None)
+        planned_ids = set(plan["task_ids"]) if plan else set()
+        planned = [t for t in self.all("task") if t["id"] in planned_ids or t.get("planned_date") == day]
+        unfinished = [t["title"] for t in planned if t["status"] not in ("Done", "Blocked") or (t.get("completed_at", "")[:10] > day)]
+        blocked = [t["title"] for t in planned if t["status"] == "Blocked" and t["updated_at"][:10] <= day]
+        blocked.extend(e["details"].get("title", "执行异常，请核对任务") for e in events if e["type"] in ("AgentRunFailed", "AgentRunCanceled", "AgentRunInterrupted"))
         summary = "今天完成：\n" + ("\n".join(f"- {x}" for x in done) or "- 暂无")
         if decisions:
             summary += "\n\n今日决策：\n" + "\n".join(f"- {x}" for x in decisions)
@@ -421,7 +477,12 @@ class Store:
             summary += "\n\n知识库变更（仅供核对，不自动计为完成）：\n" + "\n".join(f"- {x}" for x in changed_notes[:20])
         if unfinished:
             summary += "\n\n未完成：\n" + "\n".join(f"- {x}" for x in unfinished)
-        item = self.put("daily_log", {"id": log["id"] if log else identifier(), "date": day, "summary": summary, "source_event_ids": [e["id"] for e in events], "confirmed_at": None})
+        if blocked:
+            summary += "\n\n阻塞与执行异常（需要处理）：\n" + "\n".join(f"- {x}" for x in dict.fromkeys(blocked))
+        revisions = list(log.get("revisions", [])) if log else []
+        if log:
+            revisions.append({"summary": log["summary"], "saved_at": stamp()})
+        item = self.put("daily_log", {"id": log["id"] if log else identifier(), "date": day, "summary": summary, "source_event_ids": [e["id"] for e in events], "confirmed_at": None, "revisions": revisions})
         self.event("DailyLogDrafted", "daily_log", item["id"], details={"date": day})
         return item
 
@@ -430,6 +491,10 @@ class Store:
         if item.get("confirmed_at"):
             raise ValueError("日报已封存")
         item["summary"] = required_text(p.get("summary"), "日报内容", 20000)
+        if self.log_view(item)["stale"]:
+            if not p.get("acknowledge_events") or set(p.get("source_event_ids", [])) != {e["id"] for e in self.log_events(item["date"])}:
+                raise ValueError("存在新增事件，请核对最新事件后勾选确认")
+            item["source_event_ids"] = [e["id"] for e in self.log_events(item["date"])]
         item = self.put("daily_log", item)
         self.event("DailyLogEdited", "daily_log", item["id"], details={"date": item["date"]})
         return item
@@ -438,6 +503,8 @@ class Store:
         item = self._existing("daily_log", p)
         if item.get("confirmed_at"):
             raise ValueError("日报已确认")
+        if self.log_view(item)["stale"]:
+            raise ValueError("日报有新增事件，请更新草稿或核对修改后再结束今天")
         item["confirmed_at"] = stamp()
         item = self.put("daily_log", item)
         self.event("DailyLogConfirmed", "daily_log", item["id"], details={"date": item["date"]})
@@ -641,6 +708,7 @@ class Store:
                 run["error"] = "服务重启，无法确认外部执行结果。请检查工作目录后重试。"
                 run["finished_at"] = stamp()
                 self.put("agent_run", run)
+                self._record_artifacts(run, run.get("before_snapshot", {}), recovered=True)
                 task = self.get("task", run["task_id"])
                 if task and task["status"] == "Running":
                     task["status"] = "Blocked"
@@ -692,6 +760,12 @@ class Store:
         workspace = Path(project.get("workspace_path") or "") if project else None
         if not workspace or not project.get("workspace_path") or not workspace.is_dir():
             raise ValueError("请先在项目设置中填写有效的本地工作目录")
+        workspace = workspace.resolve()
+        for active in self.all("agent_run"):
+            if active["status"] == "Running" or active["id"] in self._workers:
+                other = Path(active["workspace_path"]).resolve()
+                if workspace.is_relative_to(other) or other.is_relative_to(workspace):
+                    raise ValueError("该工作目录已有执行或正在停止的任务，请等待结束")
         instruction = (p.get("instruction") or "").strip()
         if len(instruction) > 4000:
             raise ValueError("修改要求过长")
@@ -701,18 +775,24 @@ class Store:
             f"任务：{task['title']}\n\n描述与完成标准：\n{task.get('description') or task['title']}\n"
         )
         prompt += "\n请在指定工作目录内完成任务，最后清楚列出实际改动、验证结果和仍需人工审核的事项。"
-        run = self.put("agent_run", {"task_id": task["id"], "agent_id": "Codex", "status": "Running", "started_at": stamp(), "finished_at": None, "result": "", "error": "", "workspace_path": str(workspace)})
+        context = {
+            "project": {"name": project["name"], "description": project.get("description", ""), "stage": project.get("stage", "")},
+            "active_decisions": [{"title": d["title"], "content": d["content"]} for d in self.all("decision") if d["status"] == "Active" and d.get("project_id") in (None, project["id"])],
+            "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"] and r["category"] in ("Agent", "General")],
+        }
+        prompt += "\n以下是用户明确记录的项目约束与参考规则，请遵守；若与任务矛盾请说明阻塞：\n" + json.dumps(context, ensure_ascii=False)
+        before = self._workspace_snapshot(workspace)
+        run = self.put("agent_run", {"task_id": task["id"], "agent_id": "Codex", "status": "Running", "started_at": stamp(), "finished_at": None, "result": "", "error": "", "workspace_path": str(workspace), "before_snapshot": before})
         task["status"] = "Running"
         task["executor_type"] = "agent"
         task["agent_id"] = "Codex"
         task["review_status"] = None
         self.put("task", task)
         self.event("AgentRunStarted", "agent_run", run["id"], task.get("project_id"), {"title": task["title"], "agent": "Codex"})
-        before = self._workspace_snapshot(workspace)
         worker = threading.Thread(target=self._run_codex, args=(run["id"], prompt, before), daemon=True)
         self._workers[run["id"]] = worker
         worker.start()
-        return run
+        return {k: v for k, v in run.items() if k != "before_snapshot"}
 
     @staticmethod
     def _workspace_snapshot(workspace: Path) -> dict[str, tuple[int, int]]:
@@ -736,10 +816,41 @@ class Store:
                     return files
         return files
 
+    def _record_artifacts(self, run: dict[str, Any], before: dict, recovered: bool = False) -> None:
+        if run.get("evidence_recorded"):
+            return
+        # Older runs have no baseline; never label the whole workspace as new.
+        if "before_snapshot" not in run:
+            run["evidence_note"] = "旧执行没有文件基线，请直接核对工作目录。"
+            self.put("agent_run", run)
+            return
+        after = self._workspace_snapshot(Path(run["workspace_path"]))
+        baseline = {name: tuple(value) for name, value in before.items()}
+        task = self.get("task", run["task_id"])
+        for relative in sorted(after.keys() | baseline.keys()):
+            if baseline.get(relative) == after.get(relative):
+                continue
+            change = "Deleted" if relative not in after else "Created" if relative not in baseline else "Modified"
+            artifact = self.put("artifact", {
+                "task_id": run["task_id"], "agent_run_id": run["id"], "name": relative,
+                "path": str(Path(run["workspace_path"]) / relative), "change": change,
+                "status": "Review", "recovered": recovered,
+            })
+            self.event("ArtifactCreated", "artifact", artifact["id"], task.get("project_id") if task else None,
+                       {"name": relative, "change": change, "recovered": recovered})
+        run["evidence_recorded"] = True
+        run["evidence_note"] = "重启后补采，可能包含中断后的其他改动，请核对。" if recovered else "文件元数据比较；请核对工作目录中的实际内容。"
+        run.pop("before_snapshot", None)
+        self.put("agent_run", run)
+
     def _run_codex(self, run_id: str, prompt: str, before: dict[str, tuple[int, int]]) -> None:
         with self.lock:
             run = self.get("agent_run", run_id)
         if not run or run["status"] != "Running" or self._stopping:
+            with self.lock:
+                if run:
+                    self._record_artifacts(run, before)
+                self._workers.pop(run_id, None)
             return
         output_path = self.path.parent / f"agent-{run_id}.txt"
         cmd = ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "workspace-write", "-C", run["workspace_path"], "-o", str(output_path), "-"]
@@ -763,8 +874,11 @@ class Store:
             output_path.unlink(missing_ok=True)
         with self.lock:
             self._processes.pop(run_id, None)
-            self._workers.pop(run_id, None)
             run = self.get("agent_run", run_id)
+            if run:
+                self._record_artifacts(run, before)
+                run = self.get("agent_run", run_id)
+            self._workers.pop(run_id, None)
             if not run or run["status"] != "Running":
                 return
             task = self.get("task", run["task_id"])
@@ -778,18 +892,6 @@ class Store:
                 task["result"] = run["result"] if succeeded else ""
                 task["review_status"] = "Pending" if succeeded else "Failed"
                 self.put("task", task)
-                if succeeded:
-                    after = self._workspace_snapshot(Path(run["workspace_path"]))
-                    for relative in sorted(after.keys() | before.keys())[:20000]:
-                        if before.get(relative) == after.get(relative):
-                            continue
-                        change = "Deleted" if relative not in after else "Created" if relative not in before else "Modified"
-                        artifact = self.put("artifact", {
-                            "task_id": task["id"], "agent_run_id": run_id,
-                            "name": relative, "path": str(Path(run["workspace_path"]) / relative),
-                            "change": change, "status": "Review",
-                        })
-                        self.event("ArtifactCreated", "artifact", artifact["id"], task.get("project_id"), {"name": relative, "change": change})
             self.event("AgentRunFinished" if succeeded else "AgentRunFailed", "agent_run", run_id, task.get("project_id") if task else None, {"title": task["title"] if task else "Agent Run", "status": run["status"]})
 
     def cancel_agent(self, p: dict[str, Any]) -> dict[str, Any]:
@@ -833,18 +935,20 @@ class Store:
     def generate_brief(self, p: dict[str, Any]) -> dict[str, Any]:
         if not shutil.which("codex"):
             raise ValueError("本机未找到 Codex CLI")
-        tasks = [t for t in self.all("task") if t["status"] not in ("Done", "Blocked")]
+        tasks = [t for t in self.all("task") if t["status"] in ("Inbox", "Planned") and not t.get("archived_at")]
         if not tasks:
             raise ValueError("先创建任务，才能生成建议")
         decisions = [d for d in self.all("decision") if d["status"] == "Active"]
-        logs = sorted(self.all("daily_log"), key=lambda item: item["date"], reverse=True)
+        logs = sorted([log for log in self.all("daily_log") if log["date"] < local_day() and log.get("confirmed_at")], key=lambda item: item["date"], reverse=True)
         context = {
             "today": local_day(),
             "unfinished_tasks": [{"id": t["id"], "title": t["title"], "deadline": t.get("deadline"), "priority": t["priority"], "project_id": t.get("project_id")} for t in tasks[:60]],
             "projects": [{"id": x["id"], "name": x["name"], "stage": x["stage"], "pulse": x["pulse"]} for x in self.all("project")],
             "active_decisions": [{"title": x["title"], "content": x["content"]} for x in decisions[:30]],
             "yesterday_log": logs[0]["summary"] if logs else "",
-            "intelligence": [{"title": x["title"], "why_recommended": x["why_recommended"]} for x in self.all("intelligence_item")[:15]],
+            "previous_log_date": logs[0]["date"] if logs else None,
+            "blocked_tasks": [{"title": t["title"], "project_id": t.get("project_id")} for t in self.all("task") if t["status"] == "Blocked" and not t.get("archived_at")],
+            "intelligence": [{"title": x["title"], "why_recommended": x["why_recommended"]} for x in self.all("intelligence_item") if x.get("feedback") != "ignore"][:15],
             "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"]],
         }
         prompt = (
@@ -887,6 +991,8 @@ class Store:
         if not current or current["updated_at"] != project["updated_at"]:
             raise ValueError("项目在生成期间已更新，请重新生成")
         project["pulse"] = pulse
+        project["pulse_manual"] = False
+        project["pulse_generated_at"] = stamp()
         project = self.put("project", project)
         self.event("ProjectPulseGenerated", "project", project["id"], project["id"])
         return project
@@ -895,7 +1001,7 @@ class Store:
         log = self._existing("daily_log", p)
         if log.get("confirmed_at"):
             raise ValueError("日报已封存")
-        events = self.events(log["date"])
+        events = self.log_events(log["date"])
         rules = [rule["text"] for rule in self.all("personal_rule") if rule["enabled"] and rule["category"] in ("Daily Log", "General")]
         context = {"date": log["date"], "events": [{"type": e["type"], "details": e["details"]} for e in events], "rules": rules, "existing_draft": log["summary"]}
         prompt = "根据真实事件写一份简洁中文日报：已完成、产物、重要决策、未完成。规则必须遵守。Obsidian 文件变化是线索，不自动算完成。不得虚构。只输出日报正文。\n" + json.dumps(context, ensure_ascii=False)
@@ -904,6 +1010,8 @@ class Store:
         if not current or current["updated_at"] != log["updated_at"] or current.get("confirmed_at"):
             raise ValueError("日报在生成期间已修改或确认，请重新生成")
         log["summary"] = summary
+        log.setdefault("revisions", []).append({"summary": current["summary"], "saved_at": stamp()})
+        log["source_event_ids"] = [e["id"] for e in events]
         log = self.put("daily_log", log)
         self.event("DailyLogSummarized", "daily_log", log["id"], details={"date": log["date"]})
         return log

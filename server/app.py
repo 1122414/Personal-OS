@@ -13,7 +13,7 @@ import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .store import Store, local_day
 
@@ -76,6 +76,13 @@ def make_handler(store: Store, static_root: Path):
                 return
             if route == "/api/health":
                 self._json(200, {"status": "ok"})
+                return
+            if route == "/api/history":
+                try:
+                    day = parse_qs(urlparse(self.path).query).get("date", [local_day()])[0]
+                    self._json(200, store.history(day))
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
                 return
             if route == "/api/obsidian/recent":
                 settings = store.get("settings", "settings") or {}
@@ -162,7 +169,7 @@ def daily_automation(store: Store, stop: threading.Event) -> None:
                 pulse_attempts = {event["subject_id"] for event in store.events(day) if event["type"] in ("ProjectPulseGenerated", "ProjectPulseFailed")}
                 for project in store.all("project"):
                     has_tasks = any(task.get("project_id") == project["id"] for task in store.all("task"))
-                    if project["status"] == "Active" and has_tasks and not project.get("pulse") and project["id"] not in pulse_attempts:
+                    if project["status"] == "Active" and has_tasks and store.pulse_stale(project) and not project.get("pulse_manual") and project["id"] not in pulse_attempts:
                         try:
                             store.action("generate_project_pulse", {"id": project["id"]})
                         except ValueError as exc:
