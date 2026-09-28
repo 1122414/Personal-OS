@@ -69,10 +69,11 @@ export function Materials({ items }) {
 
 export function TopicForm({ run, close, onSaved, record, topic }) {
   const [busy, setBusy] = useState(false)
+  const [version] = useState(topic?.updated_at)
   async function submit(event) {
     event.preventDefault(); setBusy(true)
     const fields = Object.fromEntries(new FormData(event.currentTarget))
-    const result = await run(topic ? 'update_learning_topic' : 'create_learning_topic', { ...fields, record_id: record?.id, ...(topic ? { id: topic.id, expected_updated_at: topic.updated_at } : {}) })
+    const result = await run(topic ? 'update_learning_topic' : 'create_learning_topic', { ...fields, record_id: record?.id, ...(topic ? { id: topic.id, expected_updated_at: version } : {}) })
     setBusy(false)
     if (result) { close(); onSaved?.(result) }
   }

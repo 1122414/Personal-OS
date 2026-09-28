@@ -228,6 +228,7 @@ def workspace_automation(store: Store, stop: threading.Event) -> None:
     while not stop.is_set():
         try:
             store.summary_tick()
+            store.recall_tick()
         except (ValueError, OSError):
             pass
         stop.wait(10)

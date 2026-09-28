@@ -20,6 +20,7 @@ from .common import stamp, local_day, past_or_today, identifier, required_text, 
 from .workspace import WorkspaceMixin, WORKSPACE_KINDS, WORKSPACE_ACTIONS
 from .learning import LearningMixin, LEARNING_KINDS, LEARNING_ACTIONS, PRIVATE_KINDS
 from .learning_summary import LearningSummaryMixin, SUMMARY_KINDS, SUMMARY_ACTIONS, SUMMARY_PRIVATE
+from .recall import RecallMixin, RECALL_KINDS, RECALL_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
@@ -29,7 +30,7 @@ KINDS = (
     "project", "task", "daily_plan", "daily_log", "decision", "agent_run",
     "artifact", "intelligence_channel", "intelligence_item", "personal_rule",
     "knowledge_proposal", "daily_brief", "settings",
-) + WORKSPACE_KINDS + LEARNING_KINDS + SUMMARY_KINDS
+) + WORKSPACE_KINDS + LEARNING_KINDS + SUMMARY_KINDS + RECALL_KINDS
 TASK_STATES = {"Inbox", "Planned", "Running", "Review", "Done", "Blocked"}
 TASK_SOURCES = {"Manual", "Morning Brief", "Intelligence", "Project", "Agent Suggestion", "Yesterday Carryover"}
 DEFAULT_SETTINGS = {
@@ -42,7 +43,7 @@ DEFAULT_SETTINGS = {
 
 
 
-class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin):
+class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +174,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin):
     def state(self) -> dict[str, Any]:
         with self.lock:
             result = {
-                **{kind + "s": self.all(kind) for kind in KINDS if kind != "settings" and kind not in PRIVATE_KINDS | SUMMARY_PRIVATE},
+                **{kind + "s": self.all(kind) for kind in KINDS if kind not in {"settings", "idea_review"} | PRIVATE_KINDS | SUMMARY_PRIVATE},
                 "settings": {**DEFAULT_SETTINGS, **self.get("settings", "settings")},
                 "events": self.events(),
                 "today": local_day(),
@@ -187,6 +188,12 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin):
             result["projects"] = [{**project, "pulse_stale": self.pulse_stale(project)} for project in result["projects"]]
             result["agent_runs"] = [{k: v for k, v in run.items() if k != "before_snapshot"} for run in result["agent_runs"]]
             result["backups"] = self.backups()
+            result["personal_states"] = [self.personal_state_view(item) for item in result["personal_states"]]
+            result["weekly_review"] = self.weekly_review_view()
+            summaries = {item["topic_id"]: item for item in self.all("learning_summary")}
+            result["learning_topics"] = [{**topic, "brief": summaries.get(topic["id"], {}).get("sections", {}).get("brief", {}).get("body", ""),
+                                          "summary_at": summaries.get(topic["id"], {}).get("generated_at")}
+                                         for topic in result["learning_topics"]]
             return result
 
     def intelligence_items(self) -> list[dict[str, Any]]:
@@ -299,7 +306,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin):
                 "generate_project_pulse": self.generate_project_pulse,
                 "summarize_log": self.summarize_log,
         }
-        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS)})
+        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS, *RECALL_ACTIONS)})
         if name not in dispatch:
             raise ValueError("未知操作")
         if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy"):

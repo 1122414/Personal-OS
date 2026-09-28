@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { loadLearning, recentObsidian } from '../api.js'
 import Markdown from '../Markdown.jsx'
 import LearningSummary from '../LearningSummary.jsx'
+import { RelatedRecords } from '../PersonalState.jsx'
 import { Button, Empty, Panel, dateLabel, timeLabel } from '../ui.jsx'
 import { Capture, ExportNote, Materials, TopicForm, materialUrl, recordDate } from '../workspace.jsx'
 
@@ -54,6 +55,7 @@ function Conversation({ topic, detail, run, reload }) {
       {message.content ? <Markdown text={message.content} /> : <p className="muted">{message.status === 'Running' ? message.progress === 'thinking' ? 'Codex 正在思考，问题已保存…' : '正在连接 Codex，问题已保存…' : '没有收到正文。原始问题已保留。'}</p>}
       {message.error && <p className="inline-error" role="status">{message.error}</p>}
       {message.role === 'user' && <MessageSources sources={message.sources} />}
+      {message.state_context?.states.length > 0 && <details className="message-sources"><summary>这次建议参考的近期状态</summary>{message.state_context.states.map(state => <article key={state.source_record_id}><p>{state.text}</p><small>当时有效至 {dateLabel(state.expires_at)}</small><a href={`#records/${state.source_record_id}`}>状态原话 ↗</a></article>)}</details>}
       {message.role === 'user' && <label className="learning-evidence">理解证据<select aria-label="理解证据" value={message.learning_signal || 'none'} onChange={async event => { if (await run('set_learning_evidence', { id: message.id, signal: event.target.value })) reload() }}><option value="none">未标记</option><option value="understood">我表示理解了</option><option value="exercise_verified">这条练习我已核对</option></select></label>}
     </article>)}<div ref={end} />
   </div>
@@ -105,10 +107,10 @@ function TopicWorkspace({ topic, data, run, navigate }) {
     return () => { mounted.current = false; clearTimeout(timer); window.removeEventListener('hashchange', navigateMessage) }
   }, [topic.id])
   const current = detail?.topic?.updated_at > topic.updated_at ? detail.topic : topic
-  return <div className="topic-workspace panel"><div className="topic-heading"><div><button className="text-link" onClick={() => navigate('learning')}>学习 / 全部主题</button><h2>{current.title}</h2><p>{current.goal || '从问题出发，逐步明确想弄清楚的事。'}</p></div><div className="workspace-actions"><select aria-label="学习 Agent" value="codex" onChange={() => {}}><option value="codex">Codex</option></select><select aria-label="学习模式" value={current.mode} onChange={async event => { await run('update_learning_topic', { id: current.id, expected_updated_at: current.updated_at, mode: event.target.value }); reload() }}><option value="guided">带着学</option><option value="quick">随问随答</option></select><Button onClick={() => setEditing(true)}>修改目标</Button></div></div>
+  return <div className="topic-workspace panel"><div className="topic-heading"><div><button className="text-link" onClick={() => navigate('learning')}>学习 / 全部主题</button><h1>{current.title}</h1><p>{current.goal || '从问题出发，逐步明确想弄清楚的事。'}</p></div><div className="workspace-actions"><select aria-label="学习 Agent" value="codex" onChange={() => {}}><option value="codex">Codex</option></select><select aria-label="学习模式" value={current.mode} onChange={async event => { await run('update_learning_topic', { id: current.id, expected_updated_at: current.updated_at, mode: event.target.value }); reload() }}><option value="guided">带着学</option><option value="quick">随问随答</option></select><Button onClick={() => setEditing(true)}>修改目标</Button></div></div>
     <div className="tabs topic-tabs"><button className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>总结</button><button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>对话</button><button className={tab === 'materials' ? 'active' : ''} onClick={() => setTab('materials')}>资料</button></div>
     {error && <p className="inline-error" role="alert">{error}<Button onClick={reload}>重新读取</Button></p>}
-    {!detail ? <Empty title="正在读取对话…" /> : tab === 'summary' ? <LearningSummary topic={current} detail={detail} data={data} run={run} reload={reload} setTab={setTab} /> : tab === 'chat' ? <Conversation topic={current} detail={detail} run={run} reload={reload} /> : <TopicMaterials topic={current} detail={detail} data={data} run={run} navigate={navigate} reload={reload} />}
+    {!detail ? <Empty title="正在读取对话…" /> : tab === 'summary' ? <LearningSummary topic={current} detail={detail} data={data} run={run} reload={reload} setTab={setTab} /> : tab === 'chat' ? <div className={`conversation-layout ${detail.related_records?.length ? 'has-related' : ''}`}><Conversation topic={current} detail={detail} run={run} reload={reload} />{detail.related_records?.length > 0 && <aside className="chat-related"><RelatedRecords detail={detail} data={data} run={run} reload={reload} topicId={topic.id} /></aside>}</div> : <TopicMaterials topic={current} detail={detail} data={data} run={run} navigate={navigate} reload={reload} />}
     {editing && <TopicForm topic={current} run={run} close={() => setEditing(false)} onSaved={reload} />}
   </div>
 }

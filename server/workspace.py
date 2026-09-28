@@ -81,7 +81,7 @@ class WorkspaceMixin:
             "title": title or content.strip().splitlines()[0][:80], "content": content,
             "original_content": content, "record_type": record_type,
             "revision": 1, "created_by": "user", "task_id": None,
-            "recall_policy": "normal",
+            "recall_policy": "normal", "idea_scope": "unknown",
         })
         self.event("RecordCreated", "record", item["id"], details={"title": item["title"]})
         return item
@@ -125,6 +125,11 @@ class WorkspaceMixin:
             if not isinstance(p["record_type"], str) or p["record_type"] not in RECORD_TYPES:
                 raise ValueError("记录类型无效")
             item["record_type"] = p["record_type"]
+        for field, choices in (("idea_scope", ("unknown", "existing", "new_project")), ("recall_policy", ("normal", "never"))):
+            if field in p:
+                if p[field] not in choices:
+                    raise ValueError("回顾偏好无效")
+                item[field] = p[field]
         item["revision"] += 1
         saved = self.put("record", item)
         self.event("RecordUpdated", "record", item["id"], details={"title": item["title"]})

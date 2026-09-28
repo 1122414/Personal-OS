@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { action, loadState } from './api.js'
 import { Button, Field, Modal, NAV } from './ui.jsx'
-import Today from './pages/Today.jsx'
+import Home from './pages/Home.jsx'
 import Tasks from './pages/Tasks.jsx'
 import Projects from './pages/Projects.jsx'
 import Intelligence from './pages/Intelligence.jsx'
@@ -117,6 +117,8 @@ export default function App() {
   const [pending, setPending] = useState(null)
   const [loading, setLoading] = useState(true)
   const [previewTransparency, setPreviewTransparency] = useState(null)
+  const content = useRef(null)
+  useEffect(() => { content.current?.scrollTo(0, 0) }, [page, focus])
   useClock()
   useEffect(() => { loadState().then(setData).catch(error => setNotice({ error: error.message })).finally(() => setLoading(false)) }, [])
   useEffect(() => { const id = setInterval(() => loadState().then(setData).catch(() => {}), data?.agent_runs?.some(item => item.status === 'Running') ? 8000 : 30000); return () => clearInterval(id) }, [data?.agent_runs?.some(item => item.status === 'Running')])
@@ -128,7 +130,7 @@ export default function App() {
 
   async function refresh() { const next = await loadState(); setData(next); return next }
 
-  function navigate(next, id = null) { setPage(next); setFocus(id); window.location.hash = id ? `${next}/${id}` : next; setSearch('') }
+  function navigate(next, id = null) { setPage(next); setFocus(id?.split('/')[0] || null); window.location.hash = id ? `${next}/${id}` : next; setSearch('') }
   function open(kind, value) { setModal({ kind, value }); setSearch('') }
   async function run(name, payload) {
     setPending(name)
@@ -155,12 +157,12 @@ export default function App() {
   ], [search, data])
 
   const transparency = previewTransparency ?? settings.theme_transparency ?? 8
-  return <div className={`app-shell theme-${theme}`} style={{ '--surface-alpha': (100 - transparency) / 100 }}>
+  return <div className={`app-shell theme-${theme} ${page === 'today' ? 'workspace-home' : ''} ${page === 'learning' && focus ? 'workspace-topic' : ''}`} style={{ '--surface-alpha': (100 - transparency) / 100 }}>
     <aside className="sidebar"><div className="brand"><div className="brand-mark">♆</div><div><strong>Personal OS</strong><small>ABYSS CALLS · BUT ALSO HEALS</small></div></div><nav aria-label="主导航">{NAV.map(([key, icon, label, english], index) => <button key={key} aria-label={label} className={`nav-item ${page === key ? 'active' : ''} ${key === 'settings' ? 'settings-nav' : ''}`} onClick={() => navigate(key)}><span className="nav-icon">{icon}</span><span>{label}<small>{english}</small></span></button>)}</nav><div className="sidebar-quote"><span>✧</span><p>在混沌中，仍然前行。</p><small>PERSONAL OS · A MORE FOCUSED YOU</small></div></aside>
     <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索记录、主题、任务…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
       <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1><p>{page === 'today' ? '先记下来，再继续一件重要的事。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
-      <main className="content">{loading ? <div className="loading">正在读取工作空间…</div> : !data ? <div className="loading">无法连接本地服务。请启动 Python API。</div> : <>
-        {page === 'today' && <Today data={data} run={run} open={open} navigate={navigate} />}
+      <main className="content" ref={content}>{loading ? <div className="loading">正在读取工作空间…</div> : !data ? <div className="loading">无法连接本地服务。请启动 Python API。</div> : <>
+        {page === 'today' && <Home data={data} run={run} open={open} navigate={navigate} />}
         {page === 'records' && <Records data={data} run={run} focus={focus} navigate={navigate} />}
         {page === 'learning' && <Learning data={data} run={run} focus={focus} navigate={navigate} />}
         {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Button, Empty, Panel, dateLabel, timeLabel } from '../ui.jsx'
 
-const eventNames = { DailyPlanConfirmed: '确认今日计划', TaskCreated: '创建任务', TaskCompleted: '完成任务', DecisionCreated: '记录决策', AgentRunStarted: '启动 Agent', AgentRunFinished: 'Agent 完成', ArtifactCreated: '生成产物', TaskReviewed: '审核通过', DailyLogConfirmed: '结束今天' }
+const eventNames = { DailyPlanConfirmed: '确认今日计划', TaskCreated: '创建任务', TaskCompleted: '完成任务', DecisionCreated: '记录决策', AgentRunStarted: '启动 Agent', AgentRunFinished: 'Agent 完成', ArtifactCreated: '生成产物', TaskReviewed: '审核通过', DailyLogConfirmed: '结束今天', DailyLogDrafted: '生成日报草稿', RecordCreated: '保存记录', RecordUpdated: '修改记录', LearningTopicCreated: '建立学习主题', PersonalStateCreated: '记下近期状态', MaterialSaved: '保存资料原件' }
 
 export default function History({ data, run, open }) {
   const [day, setDay] = useState(data.today)

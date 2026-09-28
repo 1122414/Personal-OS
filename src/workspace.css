@@ -1,4 +1,54 @@
 /* Record and learning surfaces share the existing scene, colors and controls. */
+.workspace-home .hero{height:115px}
+.workspace-topic .hero{display:none}
+.workspace-topic .content{padding-top:12px}
+.home-page{gap:12px}
+.home-viewbar{display:flex;justify-content:space-between;align-items:center;flex:none;gap:12px}
+.home-viewbar small{font-size:12px;color:var(--muted)}
+.home-viewbar .tabs{margin:0}
+.home-scroll{overflow:auto;min-height:0;padding-right:3px}
+.home-capture{margin-bottom:14px}
+.home-capture .panel-heading{margin-bottom:10px}
+.home-capture .capture{background:transparent;border:0;padding:0}
+.home-capture .capture textarea{min-height:42px;font-size:15px}
+.home-capture small,.home-secondary .panel-heading small{font-size:11px;color:var(--muted)}
+.home-columns{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(270px,1fr);gap:14px;align-items:start}
+.home-primary,.home-secondary{display:flex;flex-direction:column;gap:14px;min-width:0}
+.home-columns .panel{padding:20px 22px;border-radius:13px}
+.home-page .panel-heading h2{font-size:21px}
+.continue-topic{padding:17px 0;border-bottom:1px solid var(--border)}
+.continue-topic:first-of-type{padding-top:4px}.continue-topic:last-child{border-bottom:0;padding-bottom:0}
+.continue-topic-heading{display:flex;align-items:center;gap:14px}
+.continue-topic-heading .topic-symbol{width:53px;height:53px;font-size:26px}
+.continue-topic h3{font:600 21px/1.5 'Noto Serif SC',serif;margin:0 0 6px;overflow-wrap:anywhere}
+.continue-topic small{font-size:11px;color:var(--muted)}
+.continue-topic .markdown-report{font-size:13px;line-height:1.85;margin:14px 0;max-height:105px;overflow:auto}
+.continue-topic .workspace-actions{justify-content:space-between}
+.recent-record{display:flex;gap:12px;align-items:center;text-align:left;width:100%;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--ink);padding:13px 0}
+.recent-record:last-child{border-bottom:0}.recent-record>span:nth-child(2){flex:1;min-width:0}
+.recent-record strong{display:block;font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recent-record small{display:block;font-size:10px;color:var(--muted);margin-top:6px}
+.personal-states p{font-size:13px;line-height:1.8;white-space:pre-wrap;margin:0 0 10px}
+.state-card{padding:0 0 16px;margin-bottom:15px;border-bottom:1px solid var(--border)}
+.state-card>small{display:block;color:var(--muted);font-size:11px;line-height:1.8;margin:8px 0}
+.state-card .workspace-actions{font-size:11px;margin-top:12px}
+.state-history{font-size:11px;color:var(--muted);margin-top:18px}
+.state-history article{padding:12px 0;border-bottom:1px solid var(--border)}
+.state-history a{display:block;margin-top:8px}
+.state-preference{display:flex;gap:10px;align-items:center;font-size:13px;margin:20px 0}
+.state-preference input{accent-color:var(--accent)}
+.record-state-action{margin-top:20px}.record-preferences{margin-top:20px;font-size:12px}
+.recall-card{padding:14px 0;border-bottom:1px solid var(--border);min-width:0}
+.recall-card:first-of-type{padding-top:0}.recall-card:last-child{border-bottom:0}
+.recall-card>a{display:block;color:var(--ink);text-decoration:none;font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+.recall-card>small{display:block;font-size:10px;color:var(--muted);margin-top:6px}
+.recall-card>p{font-size:12px;line-height:1.85;color:var(--muted)}
+.recall-card .workspace-actions{gap:9px 12px}.recall-card .button{font-size:11px;padding:7px 10px}.recall-card .text-link{font-size:10px}
+.related-suggestions h3{font:600 20px 'Noto Serif SC',serif;margin:0 0 16px}
+.conversation-layout{display:flex;flex:1;min-height:0;gap:16px;overflow:hidden}
+.conversation-layout .conversation{min-width:0}
+.chat-related{width:280px;flex:none;overflow:auto;border-left:1px solid var(--border);padding:22px 0 0 16px}
+.topic-heading h1{font:600 29px/1.5 'Noto Serif SC',serif;margin:8px 0;overflow-wrap:anywhere}
 .workspace-actions,.capture-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .workspace-toolbar{gap:10px;flex-wrap:wrap}
 .workspace-toolbar input,.workspace-toolbar select,.workspace-actions select{min-width:0;max-width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;color:var(--ink);background:var(--surface-strong);font-size:13px}
@@ -54,3 +104,6 @@
 @media(max-width:1100px){.summary-layout{grid-template-columns:minmax(0,1.8fr) minmax(190px,1fr)}.summary-reader,.summary-sidebar{padding:16px}.summary-section-heading{flex-wrap:wrap}}
 @media(max-width:900px),(max-height:700px){.summary-layout{min-height:450px}.summary-reader,.summary-sidebar{overflow:visible}}
 @media(max-width:700px){.summary-layout{display:block}.summary-sidebar{margin-top:12px}.candidate-compare{grid-template-columns:1fr}.summary-reader{padding:15px}}
+@media(max-width:1100px){.home-columns{grid-template-columns:minmax(0,1.4fr) minmax(245px,1fr)}.home-columns .panel{padding:17px}.chat-related{width:230px}}
+@media(max-width:900px),(max-height:700px){.home-page{display:flex;min-height:0;overflow:visible;flex:1}.home-scroll{overflow:visible}.home-page>.today-page{overflow:visible}.conversation-layout{overflow:visible;flex:none;display:block}.chat-related{width:auto;border-left:0;border-top:1px solid var(--border);padding:20px 0;overflow:visible}.conversation-layout .messages{max-height:60vh;min-height:180px;overflow:auto}.home-viewbar{padding-bottom:8px}.workspace-topic .content{padding-top:5px}}
+@media(max-width:650px){.home-columns{grid-template-columns:1fr}.home-capture .panel-heading small{display:none}.home-viewbar small{font-size:10px}.topic-heading h1{font-size:23px}.workspace-home .hero{height:110px}.home-viewbar .tabs button{font-size:12px}.continue-topic .workspace-actions{justify-content:flex-start}}
