@@ -37,7 +37,7 @@ class LearningMixin:
     @synchronized
     def learning_detail(self, topic_id):
         topic = self._existing("learning_topic", {"id": topic_id})
-        return {"topic": topic,
+        return {"topic": topic, "summary": self.summary_view(topic_id),
                 "messages": sorted((m for m in self.all("learning_message") if m["topic_id"] == topic_id), key=lambda m: m["created_at"]),
                 "runs": [r for r in self.all("learning_run") if r["topic_id"] == topic_id],
                 "materials": [m for m in self.all("material") if m["record_id"] in topic["record_ids"]]}
@@ -162,6 +162,9 @@ class LearningMixin:
                 if topic["mode"] == "guided" else "随问随答：直接回答当前问题，不强制课程、测验或学习计划。")
         context = {"topic": topic["title"], "goal": topic["goal"], "mode": mode,
                    "sources": message["sources"], "question": message["content"]}
+        summary = self.get("learning_summary", topic["id"] + "-summary")
+        if summary:
+            context["current_summary"] = {key: {"body": section["body"], "user_edited": section.get("manual", False)} for key, section in summary["sections"].items()}
         if fresh_session:
             history = [m for m in self.learning_detail(topic["id"])["messages"] if m["id"] != message["id"] and m["content"]]
             recent, size = [], 0

@@ -19,6 +19,7 @@ from typing import Any
 from .common import stamp, local_day, past_or_today, identifier, required_text, synchronized
 from .workspace import WorkspaceMixin, WORKSPACE_KINDS, WORKSPACE_ACTIONS
 from .learning import LearningMixin, LEARNING_KINDS, LEARNING_ACTIONS, PRIVATE_KINDS
+from .learning_summary import LearningSummaryMixin, SUMMARY_KINDS, SUMMARY_ACTIONS, SUMMARY_PRIVATE
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
@@ -28,7 +29,7 @@ KINDS = (
     "project", "task", "daily_plan", "daily_log", "decision", "agent_run",
     "artifact", "intelligence_channel", "intelligence_item", "personal_rule",
     "knowledge_proposal", "daily_brief", "settings",
-) + WORKSPACE_KINDS + LEARNING_KINDS
+) + WORKSPACE_KINDS + LEARNING_KINDS + SUMMARY_KINDS
 TASK_STATES = {"Inbox", "Planned", "Running", "Review", "Done", "Blocked"}
 TASK_SOURCES = {"Manual", "Morning Brief", "Intelligence", "Project", "Agent Suggestion", "Yesterday Carryover"}
 DEFAULT_SETTINGS = {
@@ -41,7 +42,7 @@ DEFAULT_SETTINGS = {
 
 
 
-class Store(WorkspaceMixin, LearningMixin):
+class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,11 +74,13 @@ class Store(WorkspaceMixin, LearningMixin):
         self._sync_lock = threading.Lock()
         self._recover_interrupted_runs()
         self.init_learning()
+        self.init_summaries()
 
     def close(self) -> None:
         with self.lock:
             self._stopping = True
             self.stop_learning()
+            self.stop_summaries()
             for run in self.all("agent_run"):
                 if run.get("status") != "Running":
                     continue
@@ -170,7 +173,7 @@ class Store(WorkspaceMixin, LearningMixin):
     def state(self) -> dict[str, Any]:
         with self.lock:
             result = {
-                **{kind + "s": self.all(kind) for kind in KINDS if kind != "settings" and kind not in PRIVATE_KINDS},
+                **{kind + "s": self.all(kind) for kind in KINDS if kind != "settings" and kind not in PRIVATE_KINDS | SUMMARY_PRIVATE},
                 "settings": {**DEFAULT_SETTINGS, **self.get("settings", "settings")},
                 "events": self.events(),
                 "today": local_day(),
@@ -296,7 +299,7 @@ class Store(WorkspaceMixin, LearningMixin):
                 "generate_project_pulse": self.generate_project_pulse,
                 "summarize_log": self.summarize_log,
         }
-        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS)})
+        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS)})
         if name not in dispatch:
             raise ValueError("未知操作")
         if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy"):
@@ -539,6 +542,7 @@ class Store(WorkspaceMixin, LearningMixin):
         self.init_workspace()
         self._recover_interrupted_runs()
         self.init_learning()
+        self.init_summaries()
         self.event("BackupRestored", details={"backup": name, "previous": previous["id"]})
         return {"message": "已恢复；恢复前数据另存为备份", "previous_backup": previous["id"]}
 
@@ -1234,6 +1238,8 @@ class Store(WorkspaceMixin, LearningMixin):
             return output.read_text(encoding="utf-8").strip()
 
     def _existing(self, kind: str, p: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(p.get("id"), str) or len(p["id"]) > 200:
+            raise ValueError("对象标识无效")
         item = self.get(kind, p.get("id") or "")
         if not item:
             raise ValueError("对象不存在")

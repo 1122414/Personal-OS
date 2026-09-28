@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { loadLearning, recentObsidian } from '../api.js'
 import Markdown from '../Markdown.jsx'
+import LearningSummary from '../LearningSummary.jsx'
 import { Button, Empty, Panel, dateLabel, timeLabel } from '../ui.jsx'
 import { Capture, ExportNote, Materials, TopicForm, materialUrl, recordDate } from '../workspace.jsx'
 
@@ -29,8 +30,13 @@ function Conversation({ topic, detail, run, reload }) {
   const failed = latest && !['Completed', 'Running'].includes(latest.status)
   useEffect(() => { if (follow) end.current?.scrollIntoView({ block: 'nearest' }) }, [detail.messages.map(message => message.content.length).join(','), follow])
   useEffect(() => {
-    const messageId = window.location.hash.split('/')[2]
-    if (messageId) { setFollow(false); document.getElementById(`message-${messageId}`)?.scrollIntoView({ block: 'center' }) }
+    const jump = () => {
+      const messageId = window.location.hash.split('/')[2]
+      if (messageId && messageId !== 'chat') { setFollow(false); document.getElementById(`message-${messageId}`)?.scrollIntoView({ block: 'center' }) }
+    }
+    jump()
+    window.addEventListener('hashchange', jump)
+    return () => window.removeEventListener('hashchange', jump)
   }, [detail.messages.length])
 
   async function send(value = text) {
@@ -48,6 +54,7 @@ function Conversation({ topic, detail, run, reload }) {
       {message.content ? <Markdown text={message.content} /> : <p className="muted">{message.status === 'Running' ? message.progress === 'thinking' ? 'Codex 正在思考，问题已保存…' : '正在连接 Codex，问题已保存…' : '没有收到正文。原始问题已保留。'}</p>}
       {message.error && <p className="inline-error" role="status">{message.error}</p>}
       {message.role === 'user' && <MessageSources sources={message.sources} />}
+      {message.role === 'user' && <label className="learning-evidence">理解证据<select aria-label="理解证据" value={message.learning_signal || 'none'} onChange={async event => { if (await run('set_learning_evidence', { id: message.id, signal: event.target.value })) reload() }}><option value="none">未标记</option><option value="understood">我表示理解了</option><option value="exercise_verified">这条练习我已核对</option></select></label>}
     </article>)}<div ref={end} />
   </div>
   {failed && <div className="learning-retry"><span>{RUN_LABELS[latest.status]} · 可以重试最近的问题</span><Button onClick={async () => { if (await run('retry_learning', { id: latest.user_message_id })) reload() }}>重试</Button><Button title="原生会话无法恢复时，用 POS 保存的对话重建" onClick={async () => { if (await run('retry_learning', { id: latest.user_message_id, reset_session: true })) reload() }}>重建会话后重试</Button></div>}
@@ -81,7 +88,7 @@ function TopicMaterials({ topic, data, detail, run, navigate, reload }) {
 function TopicWorkspace({ topic, data, run, navigate }) {
   const [detail, setDetail] = useState(null)
   const [error, setError] = useState('')
-  const [tab, setTab] = useState('chat')
+  const [tab, setTab] = useState(() => window.location.hash.split('/')[2] ? 'chat' : 'summary')
   const [editing, setEditing] = useState(false)
   const mounted = useRef(true)
   async function reload() {
@@ -91,7 +98,7 @@ function TopicWorkspace({ topic, data, run, navigate }) {
   useEffect(() => {
     mounted.current = true
     let timer
-    async function tick() { const next = await reload(); if (mounted.current) timer = setTimeout(tick, next?.runs.some(run => run.status === 'Running') || next?.materials.some(item => item.read_status === 'parsing') ? 700 : 5000) }
+    async function tick() { const next = await reload(); if (mounted.current) timer = setTimeout(tick, next?.runs.some(run => run.status === 'Running') || next?.materials.some(item => item.read_status === 'parsing') || next?.summary.state === 'updating' ? 700 : 5000) }
     tick()
     const navigateMessage = () => { if (window.location.hash.split('/')[2]) setTab('chat') }
     window.addEventListener('hashchange', navigateMessage)
@@ -99,9 +106,9 @@ function TopicWorkspace({ topic, data, run, navigate }) {
   }, [topic.id])
   const current = detail?.topic?.updated_at > topic.updated_at ? detail.topic : topic
   return <div className="topic-workspace panel"><div className="topic-heading"><div><button className="text-link" onClick={() => navigate('learning')}>学习 / 全部主题</button><h2>{current.title}</h2><p>{current.goal || '从问题出发，逐步明确想弄清楚的事。'}</p></div><div className="workspace-actions"><select aria-label="学习 Agent" value="codex" onChange={() => {}}><option value="codex">Codex</option></select><select aria-label="学习模式" value={current.mode} onChange={async event => { await run('update_learning_topic', { id: current.id, expected_updated_at: current.updated_at, mode: event.target.value }); reload() }}><option value="guided">带着学</option><option value="quick">随问随答</option></select><Button onClick={() => setEditing(true)}>修改目标</Button></div></div>
-    <div className="tabs topic-tabs"><button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>对话</button><button className={tab === 'materials' ? 'active' : ''} onClick={() => setTab('materials')}>资料</button></div>
+    <div className="tabs topic-tabs"><button className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>总结</button><button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>对话</button><button className={tab === 'materials' ? 'active' : ''} onClick={() => setTab('materials')}>资料</button></div>
     {error && <p className="inline-error" role="alert">{error}<Button onClick={reload}>重新读取</Button></p>}
-    {!detail ? <Empty title="正在读取对话…" /> : tab === 'chat' ? <Conversation topic={current} detail={detail} run={run} reload={reload} /> : <TopicMaterials topic={current} detail={detail} data={data} run={run} navigate={navigate} reload={reload} />}
+    {!detail ? <Empty title="正在读取对话…" /> : tab === 'summary' ? <LearningSummary topic={current} detail={detail} data={data} run={run} reload={reload} setTab={setTab} /> : tab === 'chat' ? <Conversation topic={current} detail={detail} run={run} reload={reload} /> : <TopicMaterials topic={current} detail={detail} data={data} run={run} navigate={navigate} reload={reload} />}
     {editing && <TopicForm topic={current} run={run} close={() => setEditing(false)} onSaved={reload} />}
   </div>
 }

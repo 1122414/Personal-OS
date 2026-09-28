@@ -75,7 +75,7 @@ class WorkspaceMixin:
         if not content.strip() and not title:
             raise ValueError("请写下一点内容，或用文件名作为标题")
         record_type = p.get("record_type") or "note"
-        if record_type not in RECORD_TYPES:
+        if not isinstance(record_type, str) or record_type not in RECORD_TYPES:
             raise ValueError("记录类型无效")
         item = self.put("record", {
             "title": title or content.strip().splitlines()[0][:80], "content": content,
@@ -122,7 +122,7 @@ class WorkspaceMixin:
             raise ValueError("记录不能完全为空")
         item["title"] = item["title"] or item["content"].strip().splitlines()[0][:80]
         if "record_type" in p:
-            if p["record_type"] not in RECORD_TYPES:
+            if not isinstance(p["record_type"], str) or p["record_type"] not in RECORD_TYPES:
                 raise ValueError("记录类型无效")
             item["record_type"] = p["record_type"]
         item["revision"] += 1
@@ -245,6 +245,39 @@ class WorkspaceMixin:
         else:
             text += item["goal"] + "\n"
             materials = [m for m in self.all("material") if m["record_id"] in item["record_ids"]]
+            report = self.get("learning_summary", object_id + "-summary")
+            if report:
+                from .learning_summary import SECTION_TITLES
+                text += "\n" + self.summary_view(object_id)["evidence"] + "\n"
+                for key, title in SECTION_TITLES.items():
+                    section = report["sections"].get(key)
+                    if not section or not section["body"]:
+                        continue
+                    suffix = " · 我的计划" if key == "next" and section.get("owner") == "user_plan" else " · AI 建议" if key == "next" else ""
+                    text += f"\n## {title}{suffix}\n\n{section['body']}\n"
+                    if section.get("manual"):
+                        text += "\n*人工修订，自动更新不会覆盖。*\n"
+                    for source in section.get("sources", []):
+                        if source["kind"] == "material":
+                            material = self.get("material", source["id"])
+                            if material and material["id"] not in {m["id"] for m in materials}:
+                                materials.append(material)
+                            link = source.get("url") or (f"{source['id']}{material['extension']}" if material else "")
+                            if source.get("page"):
+                                link += f"#page={source['page']}"
+                        elif source["kind"] == "message":
+                            link = f"#message-{source['id']}"
+                        else:
+                            link = ""
+                        label = source["title"].replace("[", "\\[").replace("]", "\\]")
+                        text += f"\n> 来源：[{label}](<{link}>) · 版本 {source['revision']}\n" if link else f"\n> 来源：{label} · 版本 {source['revision']}\n"
+                text += f"\n来源截止：{report.get('cutoff', '人工记录')}\n"
+                coverage = report.get("coverage", {})
+                if coverage.get("omitted_messages") or coverage.get("partial_sources"):
+                    text += f"\n覆盖说明：{coverage.get('omitted_messages', 0)} 条较早消息未纳入，{coverage.get('partial_sources', 0)} 份来源仅纳入部分文字。\n"
+                referenced = {source["id"]: source for section in report["sections"].values() for source in section.get("sources", []) if source["kind"] == "message"}
+                for source in referenced.values():
+                    text += f"\n<a id=\"message-{source['id']}\"></a>\n### 原话：{source['title']}\n\n{source['text']}\n"
             for rid in item["record_ids"]:
                 record = self.get("record", rid)
                 if record:

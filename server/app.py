@@ -223,6 +223,16 @@ def daily_automation(store: Store, stop: threading.Event) -> None:
         stop.wait(60)
 
 
+def workspace_automation(store: Store, stop: threading.Event) -> None:
+    """Keep short workspace jobs independent from slower RSS/daily generation."""
+    while not stop.is_set():
+        try:
+            store.summary_tick()
+        except (ValueError, OSError):
+            pass
+        stop.wait(10)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8765)
@@ -245,6 +255,7 @@ def main() -> None:
     if os.environ.get("PERSONAL_OS_DISABLE_AUTOMATION") != "1":
         worker = threading.Thread(target=daily_automation, args=(store, stop), daemon=True)
         worker.start()
+        threading.Thread(target=workspace_automation, args=(store, stop), daemon=True).start()
     def request_shutdown(_signum, _frame):
         threading.Thread(target=server.shutdown, daemon=True).start()
     signal.signal(signal.SIGTERM, request_shutdown)
