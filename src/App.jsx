@@ -18,11 +18,11 @@ function themeByTime() {
 
 function initialPage() {
   const key = window.location.hash.slice(1).split('/')[0]
-  return NAV.some(item => item[0] === key) ? key : 'today'
+  return key in pageTitles ? key : 'today'
 }
 
 const pageTitles = {
-  today: '早上好', records: '记录', learning: '学习', tasks: '任务', projects: '项目', intelligence: '情报',
+  today: '早上好', records: '记录', learning: '学习', tasks: '任务', projects: '项目', intelligence: 'AI 日报',
   review: '审核', history: '历史', settings: '设置',
 }
 
@@ -164,7 +164,7 @@ export default function App() {
     <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索记录、主题、任务…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
       <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1><p>{page === 'today' ? '先记下来，再继续一件重要的事。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
       <main className="content" ref={content}>{loading ? <div className="loading">正在读取工作空间…</div> : !data ? <div className="loading">无法连接本地服务。请启动 Python API。</div> : <>
-        {page === 'today' && <Home data={data} run={run} open={open} navigate={navigate} />}
+        {page === 'today' && <Home data={data} run={run} open={open} navigate={navigate} refresh={refresh} />}
         {page === 'records' && <Records data={data} run={run} focus={focus} navigate={navigate} />}
         {page === 'learning' && <Learning data={data} run={run} focus={focus} navigate={navigate} />}
         {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}

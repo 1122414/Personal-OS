@@ -3,10 +3,9 @@ import React from 'react'
 export const NAV = [
   ['today', '⌂', '首页', 'Today'],
   ['records', '▤', '记录', 'Records'],
-  ['learning', '▥', '学习', 'Learning'],
   ['tasks', '☑', '任务', 'Tasks'],
   ['projects', '◇', '项目', 'Projects'],
-  ['intelligence', '◎', '情报', 'Intelligence'],
+  ['intelligence', '◎', 'AI 日报', 'Reports'],
   ['review', '✓', '审核', 'Review'],
   ['history', '◷', '历史', 'History'],
   ['settings', '⚙', '设置', 'Settings'],

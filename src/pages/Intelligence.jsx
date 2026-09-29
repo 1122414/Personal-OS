@@ -3,15 +3,7 @@ import { Button, Empty, Panel, dateLabel } from '../ui.jsx'
 import DailyReports from './DailyReports.jsx'
 
 export default function Intelligence(props) {
-  const [view, setView] = useState('reports')
-  useEffect(() => {
-    if (props.focus?.startsWith('report-')) setView('reports')
-    else if (props.focus) {
-      const item = props.data.intelligence_items.find(item => item.id === props.focus)
-      if (item) setView(item.source_kind === 'workbuddy' ? 'conversations' : 'sources')
-    }
-  }, [props.focus])
-  return <div className="page intelligence-shell"><div className="tabs report-tabs">{[['reports', 'AI 日报'], ['sources', '其他情报'], ['conversations', '历史会话']].map(([key, label]) => <button key={key} className={view === key ? 'active' : ''} onClick={() => setView(key)}>{label}</button>)}</div>{view === 'reports' ? <DailyReports {...props} /> : <SourceIntelligence key={view} {...props} conversations={view === 'conversations'} />}</div>
+  return <div className="page intelligence-shell"><DailyReports {...props} /></div>
 }
 
 function SourceIntelligence({ data, run, open, focus, conversations }) {

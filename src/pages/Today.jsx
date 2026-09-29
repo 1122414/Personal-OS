@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Button, Empty, Panel, STATUS, dateLabel } from '../ui.jsx'
+import { Button, Empty, Panel, STATUS } from '../ui.jsx'
 
-export default function Today({ data, run, open, navigate }) {
+export default function TodayPlan({ data, run, open, navigate }) {
   const plan = data.daily_plans.find(item => item.date === data.today)
   const log = data.daily_logs.find(item => item.date === data.today)
   const suggestions = data.brief || []
@@ -12,12 +12,8 @@ export default function Today({ data, run, open, navigate }) {
   const tasks = useMemo(() => ordered.map(id => data.tasks.find(task => task.id === id)).filter(Boolean), [ordered, data.tasks])
   const todayTasks = (plan?.task_ids || []).map(id => data.tasks.find(task => task.id === id)).filter(Boolean)
   const done = todayTasks.filter(task => task.status === 'Done').length
-  const running = data.agent_runs.filter(run => run.status === 'Running')
-  const waiting = data.tasks.filter(task => task.status === 'Review')
   const hour = new Date().getHours()
-  const mode = !plan ? 'plan' : hour >= 20 || hour < 6 ? 'review' : 'work'
-  const latestProject = data.projects.find(project => project.status === 'Active')
-  const reports = data.daily_reports?.reports.filter(item => item.date === data.daily_reports.latest_date).slice(0, 4) || []
+  const review = plan && (hour >= 20 || hour < 6)
 
   function shift(index, delta) {
     const next = [...ordered]
@@ -27,42 +23,26 @@ export default function Today({ data, run, open, navigate }) {
     setDirty(true); setOrdered(next)
   }
 
-  return <div className="page today-page">
-    <div className="page-intro"><span>{dateLabel(data.today)}</span><span>{mode === 'plan' ? '规划今天' : mode === 'review' ? '回顾今天' : '专注执行'}</span>{data.tasks.some(task => task.status === 'Blocked' && !task.archived_at) && <Button onClick={() => navigate('tasks', data.tasks.find(task => task.status === 'Blocked' && !task.archived_at).id)}>有阻塞任务需要处理 →</Button>}</div>
-    {(!plan || editing) ? <Panel className="brief-panel feature-panel" title="今日简报" action={<span className="overline">MORNING BRIEF</span>}>
-      <div className="brief-lead"><h2>今天最值得推进的事</h2><p>从未完成任务、截止日期与项目上下文整理。请调整后确认。</p></div>
-      {tasks.length ? <div className="priority-list">{tasks.map((task, index) => {
-        const suggestion = suggestions.find(item => item.task_id === task.id)
-        return <div className="priority-item" key={task.id}>
-          <span className="priority-number">0{index + 1}</span>
-          <div><strong>{task.title}</strong><p>{suggestion?.reason || '由你加入今日计划'}</p></div>
-          <div className="row-actions"><button onClick={() => shift(index, -1)} title="上移" disabled={index === 0}>↑</button><button onClick={() => shift(index, 1)} title="下移" disabled={index === tasks.length - 1}>↓</button><button disabled={!!plan && ['Running', 'Review', 'Done'].includes(task.status)} onClick={() => { setDirty(true); setOrdered(ordered.filter(id => id !== task.id)) }} title="移除">×</button></div>
-        </div>
-      })}</div> : <Empty title="今天的计划由你开始" detail="创建任务后，它会进入这里供你确认。" />}
-      <div className="brief-actions wrap"><select aria-label="选择已有任务" value="" onChange={event => { if (event.target.value) { setDirty(true); setOrdered([...ordered, event.target.value]) } }}><option value="">选择已有任务…</option>{data.tasks.filter(task => !task.archived_at && ['Inbox', 'Planned'].includes(task.status) && !ordered.includes(task.id)).map(task => <option key={task.id} value={task.id}>{task.title}</option>)}</select><Button onClick={() => open('task')}>＋ 添加任务</Button>{!plan && data.runtime?.codex_available && tasks.length > 0 && <Button onClick={async () => { const result = await run('generate_brief', {}); if (result) { setDirty(true); setOrdered(result.priorities.map(item => item.task_id)) } }}>生成 AI 建议</Button>}{editing && <Button onClick={() => setEditing(false)}>取消调整</Button>}<Button variant="primary" onClick={async () => { const result = await run(plan ? 'revise_plan' : 'confirm_plan', { task_ids: ordered }); if (result) { setEditing(false); setDirty(false) } }}>{plan ? '保存计划调整' : '确认今日计划'}</Button></div>
-    </Panel> : <Panel className="work-panel feature-panel" title={mode === 'review' ? '今日回顾' : '今日任务'} action={<span className="overline">{done} / {todayTasks.length} 已完成</span>}>
-      <div className="progress-track"><span style={{ width: `${todayTasks.length ? done / todayTasks.length * 100 : 0}%` }} /></div>
-      <div className="work-list">{todayTasks.length ? todayTasks.map(task => <div className="work-row" key={task.id}>
-        <span className={`task-ring ${task.status === 'Done' ? 'checked' : ''}`}>{task.status === 'Done' ? '✓' : ''}</span>
-        <div><strong>{task.title}</strong><small>{data.projects.find(project => project.id === task.project_id)?.name || '无项目'} · {STATUS[task.status]}</small></div>
-        {task.executor_type === 'self' && task.status !== 'Done' ? <Button onClick={() => run('complete_task', { id: task.id })}>完成</Button> : <Button onClick={() => navigate('tasks', task.id)}>查看</Button>}
-      </div>) : <Empty title="计划已确认" detail="继续添加任务并在任务页安排今天。" action={<Button onClick={() => open('task')}>添加任务</Button>} />}</div>
-      <div className="brief-actions"><Button onClick={() => { setOrdered(plan.task_ids); setDirty(true); setEditing(true) }}>调整计划</Button><Button onClick={() => navigate('tasks')}>查看全部任务 →</Button><Button variant="primary" onClick={() => log ? navigate('history') : run('draft_log', {})}> {log ? '查看今日日报' : '生成今日日报'}</Button></div>
-    </Panel>}
-    <div className="today-grid">
-      <Panel title="今日任务" action={<button className="text-link" onClick={() => navigate('tasks')}>查看全部 →</button>}>
-        {(plan ? todayTasks : data.tasks.filter(task => task.status !== 'Done' && !task.archived_at).slice(0, 4)).length ? (plan ? todayTasks : data.tasks.filter(task => task.status !== 'Done' && !task.archived_at).slice(0, 4)).map(task => <button key={task.id} className="mini-row" onClick={() => navigate('tasks', task.id)}><span className="task-ring" /><span>{task.title}</span><small>{STATUS[task.status]}</small></button>) : <Empty title="暂无任务" />}
-      </Panel>
-      <Panel title="项目脉搏" action={<button className="text-link" onClick={() => navigate('projects')}>全部项目 →</button>}>
-        {latestProject ? <div className="pulse"><strong>{latestProject.name}</strong><p>{latestProject.pulse || latestProject.stage || '等待项目进展'}</p><small>当前阶段 · {latestProject.stage}</small></div> : <Empty title="尚无项目" detail="建立项目，今天的任务便有了上下文。" action={<Button onClick={() => open('project')}>创建项目</Button>} />}
-      </Panel>
-      <Panel title="AI 日报" action={<button className="text-link" onClick={() => navigate('intelligence')}>阅读全文 →</button>}>
-        {reports.length ? <><p className="muted">{data.daily_reports.latest_date === data.today ? '今日报告' : `今天尚未发布 · 最新 ${data.daily_reports.latest_date}`}</p>{reports.map(item => <button className="mini-row" key={item.id} onClick={() => navigate('intelligence', item.id)}><span className="small-symbol">▤</span><span>{item.title}</span></button>)}</> : <Empty title="尚未发现 AI 日报" detail="读取 Obsidian 日报目录中的成品报告。" action={<Button onClick={() => navigate('intelligence')}>查看来源</Button>} />}
-      </Panel>
-      <Panel title="等待审核" action={<button className="text-link" onClick={() => navigate('review')}>进入审核 →</button>}>
-        {waiting.length ? waiting.slice(0, 3).map(task => <button className="mini-row" key={task.id} onClick={() => navigate('review', task.id)}><span className="small-symbol">◉</span><span>{task.title}</span><small>待确认</small></button>) : <Empty title="没有待审核事项" />}
-      </Panel>
-    </div>
-    {(running.length > 0 || log) && <Panel title="今日节奏" className="rhythm-panel"><div className="rhythm-content">{running.length > 0 && <span>{running.length} 个 Agent 正在执行</span>}{log && <span>日报 · {log.confirmed_at ? '已确认' : '待确认'}</span>}<Button onClick={() => navigate(log ? 'history' : 'review')}>查看 →</Button></div></Panel>}
-  </div>
+  if (!plan || editing) return <Panel className="brief-panel today-plan" title="今天" action={<span className="overline">{plan ? '调整计划' : '规划今天'}</span>}>
+    <p className="muted">从未完成任务、截止日期与项目上下文整理。请调整后确认。</p>
+    {tasks.length ? <div className="priority-list">{tasks.map((task, index) => {
+      const suggestion = suggestions.find(item => item.task_id === task.id)
+      return <div className="priority-item" key={task.id}>
+        <span className="priority-number">0{index + 1}</span>
+        <div><strong>{task.title}</strong><p>{suggestion?.reason || '由你加入今日计划'}</p></div>
+        <div className="row-actions"><button onClick={() => shift(index, -1)} title="上移" disabled={index === 0}>↑</button><button onClick={() => shift(index, 1)} title="下移" disabled={index === tasks.length - 1}>↓</button><button disabled={!!plan && ['Running', 'Review', 'Done'].includes(task.status)} onClick={() => { setDirty(true); setOrdered(ordered.filter(id => id !== task.id)) }} title="移除">×</button></div>
+      </div>
+    })}</div> : <Empty title="今天的计划由你开始" detail="创建任务后，它会进入这里供你确认。" />}
+    <div className="brief-actions wrap"><select aria-label="选择已有任务" value="" onChange={event => { if (event.target.value) { setDirty(true); setOrdered([...ordered, event.target.value]) } }}><option value="">选择已有任务…</option>{data.tasks.filter(task => !task.archived_at && ['Inbox', 'Planned'].includes(task.status) && !ordered.includes(task.id)).map(task => <option key={task.id} value={task.id}>{task.title}</option>)}</select><Button onClick={() => open('task')}>＋ 添加任务</Button>{!plan && data.runtime?.codex_available && tasks.length > 0 && <Button onClick={async () => { const result = await run('generate_brief', {}); if (result) { setDirty(true); setOrdered(result.priorities.map(item => item.task_id)) } }}>生成 AI 建议</Button>}{editing && <Button onClick={() => setEditing(false)}>取消调整</Button>}<Button variant="primary" onClick={async () => { const result = await run(plan ? 'revise_plan' : 'confirm_plan', { task_ids: ordered }); if (result) { setEditing(false); setDirty(false) } }}>{plan ? '保存计划调整' : '确认今日计划'}</Button></div>
+  </Panel>
+
+  return <Panel className="work-panel today-plan" title={review ? '今天 · 回顾' : '今天'} action={<span className="overline">{done} / {todayTasks.length} 已完成</span>}>
+    <div className="progress-track"><span style={{ width: `${todayTasks.length ? done / todayTasks.length * 100 : 0}%` }} /></div>
+    <div className="work-list">{todayTasks.length ? todayTasks.map(task => <div className="work-row" key={task.id}>
+      <span className={`task-ring ${task.status === 'Done' ? 'checked' : ''}`}>{task.status === 'Done' ? '✓' : ''}</span>
+      <div><strong>{task.title}</strong><small>{data.projects.find(project => project.id === task.project_id)?.name || '无项目'} · {STATUS[task.status]}</small></div>
+      {task.executor_type === 'self' && task.status !== 'Done' ? <Button onClick={() => run('complete_task', { id: task.id })}>完成</Button> : <Button onClick={() => navigate('tasks', task.id)}>查看</Button>}
+    </div>) : <Empty title="计划已确认" detail="继续添加任务并在任务页安排今天。" action={<Button onClick={() => open('task')}>添加任务</Button>} />}</div>
+    <div className="brief-actions wrap"><Button onClick={() => { setOrdered(plan.task_ids); setDirty(true); setEditing(true) }}>调整计划</Button><Button onClick={() => navigate('tasks')}>全部任务 →</Button><Button variant="primary" onClick={() => log ? navigate('history') : run('draft_log', {})}>{log ? (log.confirmed_at ? '查看今日日报' : '核对并结束今天') : '生成今日日报'}</Button></div>
+  </Panel>
 }

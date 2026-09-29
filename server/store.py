@@ -795,10 +795,11 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
 
     def save_settings(self, p: dict[str, Any]) -> dict[str, Any]:
         item = self.get("settings", "settings") or {"id": "settings", **DEFAULT_SETTINGS}
+        previous_scan_root = item.get("repo_scan_root", DEFAULT_SETTINGS["repo_scan_root"])
         for field in ("theme_mode", "manual_theme", "nickname", "obsidian_vault", "motion", "workbuddy_root", "workbuddy_since", "repo_scan_root"):
             if field in p:
                 item[field] = str(p[field]).strip()
-        if "repo_scan_root" in p and not Path(item["repo_scan_root"] or "~/My-Item").expanduser().is_dir():
+        if item.get("repo_scan_root", previous_scan_root) != previous_scan_root and not Path(item["repo_scan_root"] or "~/My-Item").expanduser().is_dir():
             raise ValueError("仓库扫描目录不存在")
         if item["theme_mode"] not in ("auto", "manual") or item["manual_theme"] not in ("morning", "afternoon", "night"):
             raise ValueError("主题设置无效")
