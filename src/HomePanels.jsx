@@ -48,7 +48,7 @@ export function RepoOnboarding({ run }) {
   const toggle = path => setPicked(current => current.includes(path) ? current.filter(item => item !== path) : [...current, path])
   return <Panel title="先登记正在做的项目" className="repo-onboarding" action={<small>{state.root}</small>}>
     <p className="muted">下面是最近 30 天有提交的仓库。登记后，首页会从这些项目读取提交和会话；未登记的仓库不会被读取。</p>
-    {state.loading ? <p className="muted">正在查找仓库…</p> : state.candidates.length ? <div className="repo-list">{state.candidates.map(item => <label key={item.path} className="repo-option"><input type="checkbox" checked={picked.includes(item.path)} onChange={() => toggle(item.path)} /><span><strong>{item.name}</strong><small>{item.commits} 次提交 · 最近 {dateLabel(item.last_commit_at)}</small></span></label>)}</div> : <p className="muted">{state.message || '没有找到最近有提交的仓库，可以在设置中修改扫描目录，或在项目页手动创建。'}</p>}
+    {state.loading ? <p className="muted">正在查找仓库…</p> : state.candidates.length ? <div className="repo-list panel-body">{state.candidates.map(item => <label key={item.path} className="repo-option"><input type="checkbox" checked={picked.includes(item.path)} onChange={() => toggle(item.path)} /><span><strong>{item.name}</strong><small>{item.commits} 次提交 · 最近 {dateLabel(item.last_commit_at)}</small></span></label>)}</div> : <p className="muted">{state.message || '没有找到最近有提交的仓库，可以在设置中修改扫描目录，或在项目页手动创建。'}</p>}
     <div className="brief-actions"><Button variant="primary" disabled={!picked.length} onClick={() => run('register_projects', { paths: picked })}>登记所选项目</Button></div>
   </Panel>
 }
@@ -69,9 +69,9 @@ export function HomeItems({ data, run, refresh, navigate }) {
   const current = home.items.filter(item => item.home_status !== 'done')
   const finished = home.items.length - current.length
   return <Panel title="长线事项" action={<small>{finished ? `已完成 ${finished} 项 · ` : ''}以 Obsidian 为准</small>} className="home-items">
-    {current.length ? current.map(item => <article className="home-item" key={`${item.id}-${item.version}`}>
+    <div className="panel-body">{current.length ? current.map(item => <article className="home-item" key={`${item.id}-${item.version}`}>
       <div className="home-item-heading"><strong>{item.title}</strong><select aria-label={`${item.title}状态`} value={item.home_status} disabled={!item.version} onChange={async event => { if (!await run('update_home_item', { note: item.note, field: 'home_status', value: event.target.value, expected_version: item.version, title: item.title })) refresh() }}>{Object.entries(HOME_STATUS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></div>
       {item.error ? <p className="notice">{item.error}</p> : <><HomeField item={item} field="home_progress" label="当前进度" run={run} refresh={refresh} /><HomeField item={item} field="home_next" label="下一步" run={run} refresh={refresh} /></>}
-    </article>) : <p className="muted">所有事项都已完成。</p>}
+    </article>) : <p className="muted">所有事项都已完成。</p>}</div>
   </Panel>
 }
