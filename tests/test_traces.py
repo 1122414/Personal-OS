@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -135,6 +136,30 @@ class TraceTests(unittest.TestCase):
         self.store.action("register_projects", {"paths": [str(alpha)]})
         work = self.store.state()["last_work"]
         self.assertEqual([x["title"] for x in work["unassigned_sessions"]], ["别的目录里的问题"])
+
+    def test_workbuddy_sessions_are_kept_only_for_registered_projects(self):
+        alpha = self.repo("alpha")
+        self.commit(alpha, "提交", at(2))
+        root = self.root / "workbuddy"
+        root.mkdir()
+        with sqlite3.connect(root / "workbuddy.db") as db:
+            db.execute("CREATE TABLE sessions (id TEXT, title TEXT, cwd TEXT, updated_at INTEGER, deleted_at INTEGER)")
+            ms = int(at(2, 14).timestamp() * 1000)
+            db.executemany("INSERT INTO sessions VALUES (?,?,?,?,NULL)", [("w1", "项目里的会话", str(alpha / "src"), ms), ("w2", "定时日报", str(self.root / "notes"), ms)])
+        self.store.action("save_settings", {"workbuddy_root": str(root)})
+        self.store.action("register_projects", {"paths": [str(alpha)]})
+        work = self.store.state()["last_work"]
+        self.assertEqual([(x["label"], x["title"]) for x in work["groups"][0]["sessions"]], [("WorkBuddy", "项目里的会话")])
+        self.assertEqual(work["unassigned_sessions"], [])
+
+    def test_unmatched_sessions_do_not_decide_the_last_work_day(self):
+        alpha = self.repo("alpha")
+        self.commit(alpha, "真正的工作", at(3))
+        self.codex_session(self.root / "automation", at(1), "定时日报", "已生成")
+        self.store.action("register_projects", {"paths": [str(alpha)]})
+        work = self.store.state()["last_work"]
+        self.assertEqual(work["date"], at(3).date().isoformat())
+        self.assertEqual([g["name"] for g in work["groups"]], ["alpha"])
 
     def test_repeated_sync_does_not_duplicate_traces(self):
         alpha = self.repo("alpha")

@@ -378,9 +378,11 @@ class TracesMixin:
         for sid, title, cwd, updated in rows:
             at = datetime.fromtimestamp(updated / 1000).astimezone()
             project = self._match_project(projects, cwd or "")
-            self.record_trace("TraceSession", f"workbuddy:{sid}", local_time(at), project["id"] if project else None, {
+            if not project:
+                continue
+            self.record_trace("TraceSession", f"workbuddy:{sid}", local_time(at), project["id"], {
                 "source": "workbuddy", "label": "WorkBuddy", "title": clip(title or "WorkBuddy 会话", TITLE_LIMIT), "last_text": "",
-                "ref": str(sid), "workspace": cwd or "", "project": project["name"] if project else "",
+                "ref": str(sid), "workspace": cwd or "", "project": project["name"],
             })
             count += 1
         return count
@@ -389,7 +391,7 @@ class TracesMixin:
     def last_work(self) -> dict[str, Any] | None:
         row = self.db.execute(
             "SELECT max(substr(created_at,1,10)) FROM activity WHERE substr(created_at,1,10) < ? AND "
-            "(type LIKE 'Trace%' OR type LIKE 'Task%' OR type LIKE 'Agent%')", (local_day(),),
+            "((type LIKE 'Trace%' AND project_id IS NOT NULL) OR type LIKE 'Task%' OR type LIKE 'Agent%')", (local_day(),),
         ).fetchone()
         day = row[0] if row else None
         if not day:
