@@ -56,6 +56,22 @@ class ObsidianHomeTests(unittest.TestCase):
         item = self.items()[item_id]
         return self.store.action("update_home_item", {"note": item["note"], "field": field, "value": value, "expected_version": version or item["version"], "title": item["title"]})
 
+    def test_next_step_becomes_todo_and_prompts_for_a_new_one_without_writing_obsidian(self):
+        self.progress.write_text("---\nhome_next: 过一遍  项目难点\n---\n# 秋招学习进度\n")
+        before = self.progress.read_text()
+        item = self.items()["study"]
+        self.assertIsNone(item["next_todo"])
+        payload = {"title": item["home_next"], "today": True, "home_item_note": item["note"], "home_next_snapshot": item["home_next"]}
+        todo = self.store.action("create_todo", payload)
+        self.assertEqual(self.store.action("create_todo", payload)["id"], todo["id"])
+        self.assertEqual(self.items()["study"]["next_todo"], {"id": todo["id"], "done": False, "planned_date": todo["planned_date"]})
+        self.store.action("toggle_todo", {"id": todo["id"]})
+        self.assertTrue(self.items()["study"]["next_todo"]["done"])
+        self.assertEqual(self.progress.read_text(), before)
+        self.update("study", "home_next", "模拟面试一次")
+        self.assertIsNone(self.items()["study"]["next_todo"])
+        self.assertEqual(len(self.store.all("todo")), 1)
+
     def test_reads_progress_status_and_reports_broken_links(self):
         items = self.items()
         self.assertEqual((items["study"]["home_progress"], items["study"]["home_status"]), ("复习简历拷打", "paused"))

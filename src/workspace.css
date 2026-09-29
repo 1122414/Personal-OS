@@ -204,3 +204,5 @@
 .form-hint{margin:0;padding:10px 12px;border-radius:10px;background:var(--surface-soft,rgba(0,0,0,.04));color:var(--muted);font-size:13px;line-height:1.6}
 .pre-wrap{white-space:pre-wrap}
 .text-link:disabled{opacity:.45;cursor:not-allowed;text-decoration:none}
+.home-next-action{margin:2px 0 0 72px;font-size:11px}.home-next-action .text-link{font-size:11px;padding:2px 0}
+.home-next-action.done{color:var(--accent)}

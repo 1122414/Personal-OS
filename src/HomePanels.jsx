@@ -86,6 +86,14 @@ function HomeField({ item, field, label, run, refresh }) {
   return <label className="home-field"><span>{label}</span><input value={value} maxLength={500} placeholder="点击填写" onChange={event => setValue(event.target.value)} onBlur={save} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setValue(item[field] || ''); event.currentTarget.blur() } }} disabled={!item.version} /></label>
 }
 
+function NextTodo({ item, run, navigate }) {
+  const linked = item.next_todo
+  if (!item.home_next || !item.version) return null
+  if (linked?.done) return <p className="home-next-action done">下一步已完成，填新的下一步</p>
+  if (linked) return <p className="home-next-action"><button className="text-link" onClick={() => navigate('todos', linked.id)}>{linked.planned_date ? '已在今天的待办' : '已在待办池'} →</button></p>
+  return <p className="home-next-action"><button className="text-link" onClick={() => run('create_todo', { title: item.home_next.slice(0, 200), today: true, home_item_note: item.note, home_next_snapshot: item.home_next })}>→ 今天做</button></p>
+}
+
 export function HomeItems({ data, run, refresh, navigate }) {
   const home = data.home_items || { configured: false, items: [], errors: [] }
   if (!home.configured) return <Panel title="长线事项" className="home-items"><Empty title="读取 Obsidian 首页的事项" detail={home.errors[0] || '在设置中配置 Obsidian vault 后显示。'} action={<Button onClick={() => navigate('settings')}>打开设置</Button>} /></Panel>
@@ -94,7 +102,7 @@ export function HomeItems({ data, run, refresh, navigate }) {
   return <Panel title="长线事项" action={<small>{finished ? `已完成 ${finished} 项 · ` : ''}以 Obsidian 为准</small>} className="home-items">
     <div className="panel-body">{current.length ? current.map(item => <article className="home-item" key={`${item.id}-${item.version}`}>
       <div className="home-item-heading"><strong>{item.title}</strong><select aria-label={`${item.title}状态`} value={item.home_status} disabled={!item.version} onChange={async event => { if (!await run('update_home_item', { note: item.note, field: 'home_status', value: event.target.value, expected_version: item.version, title: item.title })) refresh() }}>{Object.entries(HOME_STATUS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></div>
-      {item.error ? <p className="notice">{item.error}</p> : <><HomeField item={item} field="home_progress" label="当前进度" run={run} refresh={refresh} /><HomeField item={item} field="home_next" label="下一步" run={run} refresh={refresh} /></>}
+      {item.error ? <p className="notice">{item.error}</p> : <><HomeField item={item} field="home_progress" label="当前进度" run={run} refresh={refresh} /><HomeField item={item} field="home_next" label="下一步" run={run} refresh={refresh} /><NextTodo item={item} run={run} navigate={navigate} /></>}
     </article>) : <p className="muted">所有事项都已完成。</p>}</div>
   </Panel>
 }

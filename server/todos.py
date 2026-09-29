@@ -15,6 +15,10 @@ TODO_KINDS = ("todo",)
 TODO_ACTIONS = ("create_todo", "update_todo", "toggle_todo", "plan_todo", "archive_todo", "record_to_todo")
 
 
+def _same_text(value: Any) -> str:
+    return " ".join(value.split()) if isinstance(value, str) else ""
+
+
 def _optional(value: Any, field: str, limit: int) -> str:
     if value is None:
         return ""
@@ -29,7 +33,24 @@ class TodoMixin:
             raise ValueError("项目不存在")
         return project_id or None
 
+    def _home_next_matches(self, note: Any, home_next: Any) -> list[dict[str, Any]]:
+        key = _same_text(home_next)
+        if not isinstance(note, str) or not note or not key:
+            return []
+        return [t for t in self.all("todo") if t.get("home_item_note") == note and _same_text(t.get("home_next_snapshot")) == key and not t.get("archived_at")]
+
+    def home_next_todo(self, note: Any, home_next: Any) -> dict[str, Any] | None:
+        matches = self._home_next_matches(note, home_next)
+        if not matches:
+            return None
+        pending = [t for t in matches if not t.get("done_at")]
+        todo = pending[0] if pending else max(matches, key=lambda t: t["done_at"])
+        return {"id": todo["id"], "done": bool(todo.get("done_at")), "planned_date": todo.get("planned_date")}
+
     def create_todo(self, p: dict[str, Any]) -> dict[str, Any]:
+        pending = [t for t in self._home_next_matches(p.get("home_item_note"), p.get("home_next_snapshot")) if not t.get("done_at")]
+        if pending:
+            return self.plan_todo({"id": pending[0]["id"], "today": True}) if p.get("today") and not pending[0].get("planned_date") else pending[0]
         record_id = p.get("record_id") or None
         if record_id and not self.get("record", record_id):
             raise ValueError("来源记录不存在")

@@ -137,6 +137,7 @@ class ObsidianHomeMixin:
                     item["home_status"] = "active"
             except (ValueError, OSError, UnicodeDecodeError) as exc:
                 item["error"] = str(exc) if isinstance(exc, ValueError) else "关联笔记暂不可读取"
+            item["next_todo"] = None if item["error"] else self.home_next_todo(item["note"], item["home_next"])
             result["items"].append(item)
         return result
 
