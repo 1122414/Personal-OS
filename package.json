@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "npm run build && python3 -m unittest discover -s tests -q",
+    "check": "npm run build && npm run test:frontend && python3 -m unittest discover -s tests -q",
+    "test:frontend": "node --test tests/frontend/*.test.js",
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
