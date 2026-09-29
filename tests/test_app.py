@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import Mock
 
 from server.app import make_handler, migrate_legacy_database
 from server.store import Store
@@ -34,6 +35,18 @@ class LocalRequestTests(unittest.TestCase):
     def test_dns_rebinding_host_is_rejected(self):
         self.handler.headers = {"Host": "example.com:8765"}
         self.assertFalse(self.handler._local_request())
+
+    def test_malformed_authorities_are_rejected_without_raising(self):
+        for host, origin in (("[", None), ("127.0.0.1:bad", None),
+                             ("127.0.0.1", "http://["), ("127.0.0.1", "http://127.0.0.1:bad")):
+            with self.subTest(host=host, origin=origin):
+                self.handler.headers = {"Host": host, "Content-Type": "application/json"}
+                if origin:
+                    self.handler.headers["Origin"] = origin
+                self.assertFalse(self.handler._local_request(mutation=True))
+                self.handler._json = Mock()
+                self.handler.do_POST()
+                self.assertEqual(403, self.handler._json.call_args.args[0])
 
 
 class MigrationTests(unittest.TestCase):

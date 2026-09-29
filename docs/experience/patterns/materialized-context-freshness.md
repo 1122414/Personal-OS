@@ -29,3 +29,9 @@ Validated by `tests/test_repairs.py` (late events, concurrent events during edit
 ## Workspace recall extension (2026-09-29)
 
 The weekly review is also a materialized view. `server/recall.py` rechecks record content, feedback and currently active personal states before showing a stored candidate; age and cooldown filters run before the final three-item cap. An ended or expired state stops influencing fresh advice, while the state snapshot stored on an earlier assistant response remains historical evidence. `tests/test_recall.py` verifies these boundaries, including edits after review generation, no-new-project filtering, and an expired state leaving a confirmed plan untouched. These deterministic cases are verified once; long-term recommendation usefulness is not established.
+
+## Empty-cache and historical-source boundaries (2026-09-29)
+
+Maintenance regressions exposed two distinct cache boundaries: `recall_tick` treated an empty eligibility check as the week's completed review, while summary generation reconstructed record context from currently linked records instead of the versions stored on messages. Empty review rows can now be filled in place when eligible material appears; nonempty rows remain sealed even after feedback hides all items. Summary snapshots now retain historical record versions before adding current records, distinguish user text from imported sources, and version the source contract so old reports become stale without overwriting manual sections.
+
+Verified once by `test_empty_week_can_later_generate_but_handled_review_is_not_refilled`, `test_legacy_empty_review_is_filled_in_place`, `test_summary_retains_record_snapshot_after_edit_and_unlink`, and `test_historical_import_is_not_user_intent_and_clipping_is_visible`. The summary context budget still bounds how much raw history can be supplied; this repair does not imply unlimited recall.

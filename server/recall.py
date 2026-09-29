@@ -170,7 +170,9 @@ class RecallMixin:
         year, week, _ = now.isocalendar()
         key = f"{year}-W{week:02d}"
         existing = next((review for review in self.all("idea_review") if review["week"] == key), None)
-        if existing:
+        # A no-match check does not consume the week's one actual review.
+        # Keep nonempty reviews sealed even after every item has been handled.
+        if existing and existing["items"]:
             return existing
         candidates = {}
         for topic in self.all("learning_topic"):
@@ -185,7 +187,10 @@ class RecallMixin:
                 if item["record_id"] not in candidates or candidates[item["record_id"]]["score"] < item["score"]:
                     candidates[item["record_id"]] = {**item, "status": "Pending"}
         items = sorted(candidates.values(), key=lambda item: (-item["score"], item["record_id"]))[:3]
-        return self.put("idea_review", {"week": key, "items": items, "generated_at": now.isoformat()})
+        if not items and existing:
+            return existing
+        review = {**(existing or {}), "week": key, "items": items, "generated_at": now.isoformat()}
+        return self.put("idea_review", review)
 
     def weekly_review_view(self, now=None):
         now = now or datetime.now().astimezone()

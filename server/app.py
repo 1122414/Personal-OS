@@ -24,6 +24,18 @@ ROOT = Path(__file__).resolve().parent.parent
 MAX_BODY_BYTES = 1_000_000
 
 
+def is_local_origin(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+        return (parsed.scheme == "http"
+                and parsed.hostname in ("127.0.0.1", "localhost")
+                and parsed.port != 0
+                and not (parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment))
+    except ValueError:
+        # Malformed brackets and ports must fail closed, not abort the handler.
+        return False
+
+
 def migrate_legacy_database(source: Path, target: Path) -> bool:
     """Copy the web MVP database once, using SQLite backup even if it is open."""
     if target.exists() or not source.is_file() or source.resolve() == target.resolve():
@@ -46,15 +58,12 @@ def migrate_legacy_database(source: Path, target: Path) -> bool:
 def make_handler(store: Store, static_root: Path):
     class Handler(BaseHTTPRequestHandler):
         def _local_request(self, mutation: bool = False) -> bool:
-            host = urlparse("http://" + self.headers.get("Host", "")).hostname
-            if host not in ("127.0.0.1", "localhost"):
+            if not is_local_origin("http://" + self.headers.get("Host", "")):
                 return False
             if mutation:
                 origin = self.headers.get("Origin")
-                if origin:
-                    parsed = urlparse(origin)
-                    if parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost"):
-                        return False
+                if origin and not is_local_origin(origin):
+                    return False
                 if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
                     return False
             return True

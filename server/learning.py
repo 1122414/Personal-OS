@@ -93,6 +93,7 @@ class LearningMixin:
             record = self.get("record", record_id)
             if record:
                 sources.append({"kind": "record", "id": record_id, "revision": record["revision"], "title": record["title"],
+                                "role": "source" if record.get("source") else "user", "partial": len(record["content"]) > 20000,
                                 "text": record["content"][:20000], "note": "原文" if len(record["content"]) <= 20000 else "仅前 20000 字"})
         for material_id in dict.fromkeys(material_ids):
             material = self._existing("material", {"id": material_id})

@@ -201,6 +201,52 @@ class SummaryTests(unittest.TestCase):
         snapshot = self.store._summary_snapshot(self.topic["id"])
         self.assertNotIn("错误的未完成结论", str(snapshot["sources"]))
 
+    def test_summary_retains_record_snapshot_after_edit_and_unlink(self):
+        record = self.store.action("create_record", {"content": "原文：先练习参数透传"})
+        self.store.action("link_record", {"id": self.topic["id"], "record_id": record["id"]})
+        topic = self.store.get("learning_topic", self.topic["id"])
+        self.question["sources"] = self.store._learning_sources(topic, [])
+        self.store.put("learning_message", self.question)
+        revised = self.store.action("update_record", {"id": record["id"], "expected_updated_at": record["updated_at"], "content": "改为练习关键字参数"})
+        original_ref = f"record:{record['id']}:{record['revision']}"
+        latest_ref = f"record:{record['id']}:{revised['revision']}"
+        snapshot = self.store._summary_snapshot(topic["id"])
+        self.assertEqual(record["content"], snapshot["sources"][original_ref]["text"])
+        self.assertEqual(revised["content"], snapshot["sources"][latest_ref]["text"])
+        self.assertEqual(self.question["id"], snapshot["sources"][original_ref]["message_id"])
+        self.store.action("link_record", {"id": topic["id"], "record_id": record["id"], "remove": True})
+        snapshot = self.store._summary_snapshot(topic["id"])
+        self.assertEqual(record["content"], snapshot["sources"][original_ref]["text"])
+        self.assertNotIn(latest_ref, snapshot["sources"])
+
+    def test_historical_import_is_not_user_intent_and_clipping_is_visible(self):
+        record = self.store.action("create_record", {"content": "资料" * 11000})
+        record["source"] = {"kind": "obsidian"}
+        self.store.put("record", record)
+        self.store.action("link_record", {"id": self.topic["id"], "record_id": record["id"]})
+        sources = self.store._learning_sources(self.store.get("learning_topic", self.topic["id"]), [])
+        self.assertEqual("source", sources[0]["role"])
+        self.assertTrue(sources[0]["partial"])
+        # Older stored messages do not contain explicit role/partial metadata.
+        sources[0].pop("role")
+        sources[0].pop("partial")
+        self.question["sources"] = sources
+        self.store.put("learning_message", self.question)
+        self.store.action("link_record", {"id": self.topic["id"], "record_id": record["id"], "remove": True})
+        source = self.store._summary_snapshot(self.topic["id"])["sources"][f"record:{record['id']}:1"]
+        self.assertEqual("source", source["role"])
+        self.assertTrue(source["partial"])
+
+    def test_invalid_restore_section_key_preserves_report(self):
+        report = self.generate()["report"]
+        self.store.action("edit_summary_section", {"id": self.topic["id"], "key": "goal", "body": "新目标", "expected_revision": 1})
+        version = self.store.summary_view(self.topic["id"])["versions"][0]
+        before = self.store.get("learning_summary", report["id"])
+        for key in ([], {}, None, 42):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.store.action("restore_summary_section", {"id": self.topic["id"], "version_id": version["id"], "key": key})
+        self.assertEqual(before, self.store.get("learning_summary", report["id"]))
+
 
 if __name__ == "__main__":
     unittest.main()

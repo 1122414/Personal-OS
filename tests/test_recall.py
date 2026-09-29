@@ -115,6 +115,26 @@ class RecallTests(unittest.TestCase):
         self.assertEqual(2, len(self.store.all('idea_review')))
         self.assertEqual([], self.store.all('task'))
 
+    def test_empty_week_can_later_generate_but_handled_review_is_not_refilled(self):
+        self.assertEqual([], self.store.recall_tick(self.now)['items'])
+        old = self.record()
+        review = self.store.recall_tick(self.now)
+        self.assertEqual([old['id']], [item['record_id'] for item in review['items']])
+        self.store.action('recall_feedback', {'id': old['id'], 'choice': 'never'})
+        self.record('Python 装饰器新的旧点子')
+        self.store.recall_tick(self.now)
+        self.assertEqual([], self.store.weekly_review_view(self.now)['items'])
+        self.assertEqual(1, len(self.store.all('idea_review')))
+
+    def test_legacy_empty_review_is_filled_in_place(self):
+        year, week, _ = self.now.isocalendar()
+        legacy = self.store.put('idea_review', {'week': f'{year}-W{week:02d}', 'items': []})
+        self.record()
+        review = self.store.recall_tick(self.now)
+        self.assertEqual(legacy['id'], review['id'])
+        self.assertEqual(1, len(review['items']))
+        self.assertEqual(1, len(self.store.all('idea_review')))
+
     def test_weekly_filters_age_before_cap_and_empty_remains_empty(self):
         self.record('完全不相关的文字')
         for _ in range(3):
