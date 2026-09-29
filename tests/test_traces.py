@@ -212,6 +212,30 @@ class TraceTests(unittest.TestCase):
         self.store.action("sync_traces", {})
         self.assertTrue(self.store.log_view(self.store.get("daily_log", log["id"]))["stale"])
 
+    def test_H02_sources_open_only_recorded_commits_and_sessions(self):
+        alpha = self.repo("alpha")
+        self.commit(alpha, "可追溯的提交", at(1))
+        self.codex_session(alpha, at(1, 11), "修一下首页", "已修好")
+        self.store.action("register_projects", {"paths": [str(alpha)]})
+        group = self.store.state()["last_work"]["groups"][0]
+        commit = self.store.action("show_commit", {"id": group["commits"][0]["id"]})
+        self.assertEqual((commit["subject"], commit["project"]), ("可追溯的提交", "alpha"))
+        self.assertIn("log.txt", commit["stat"])
+        session = group["sessions"][0]
+        with patch("server.traces.subprocess.run") as run:
+            result = self.store.action("reveal_trace_source", {"id": session["id"]})
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], ["open", "-R", session["ref"]])
+        self.assertEqual(result["path"], session["ref"])
+        with self.assertRaisesRegex(ValueError, "找不到这条工作痕迹"):
+            self.store.action("show_commit", {"id": session["id"]})
+        with self.assertRaisesRegex(ValueError, "找不到这条工作痕迹"):
+            self.store.action("reveal_trace_source", {"id": "/etc/passwd"})
+        Path(session["ref"]).unlink()
+        with patch("server.traces.subprocess.run") as run, self.assertRaisesRegex(ValueError, "已不存在"):
+            self.store.action("reveal_trace_source", {"id": session["id"]})
+        run.assert_not_called()
+
     def test_sync_without_projects_or_sources_is_empty_and_quiet(self):
         result = self.store.action("sync_traces", {})
         self.assertEqual((result["commits"], result["sessions"], result["errors"]), (0, 0, []))

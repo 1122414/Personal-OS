@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { action } from './api.js'
-import { Button, Empty, Panel, dateLabel, timeLabel } from './ui.jsx'
+import { Button, Empty, Modal, Panel, dateLabel, timeLabel } from './ui.jsx'
 
 const HOME_STATUS = { active: '进行中', paused: '已暂停', done: '已完成' }
 
@@ -8,16 +9,36 @@ function fileName(path) {
   return (path || '').split('/').pop()
 }
 
-function SessionRow({ item }) {
+function SessionRow({ item, onReveal }) {
   return <li className="trace-row" title={item.ref}>
     <span className="trace-kind">{item.label}</span>
-    <div><strong>{item.title}</strong>{item.last_text && <p>停在：{item.last_text}</p>}<small>{timeLabel(item.at)}{item.source !== 'workbuddy' && ` · ${fileName(item.ref)}`}</small></div>
+    <div><strong>{item.title}</strong>{item.last_text && <p>停在：{item.last_text}</p>}<small>{timeLabel(item.at)}{item.source !== 'workbuddy' && <> · <button className="trace-source" title="在访达中显示" onClick={() => onReveal(item)}>{fileName(item.ref)}</button></>}</small></div>
   </li>
+}
+
+function CommitDetail({ commit, onClose }) {
+  return createPortal(<Modal title={commit.subject} onClose={onClose}>
+    <p className="muted">{commit.project} · {commit.author} · {dateLabel(commit.at)} {timeLabel(commit.at)} · {commit.hash.slice(0, 7)}</p>
+    {commit.body && <p className="commit-body">{commit.body}</p>}
+    <pre className="commit-stat">{commit.stat || '没有文件改动'}</pre>
+  </Modal>, document.querySelector('.app-shell') || document.body)
 }
 
 export function LastWork({ data, run }) {
   const work = data.last_work
   const sync = data.trace_sync || {}
+  const [commit, setCommit] = useState(null)
+  const [sourceError, setSourceError] = useState('')
+  const open = async (name, item) => {
+    setSourceError('')
+    try {
+      const { result } = await action(name, { id: item.id })
+      if (name === 'show_commit') setCommit(result)
+    } catch (error) {
+      setSourceError(error.message)
+    }
+  }
+  const reveal = item => open('reveal_trace_source', item)
   const tools = <span className="panel-tools">{work && <span className="overline">{dateLabel(work.date)}</span>}<button className="text-link" onClick={() => run('sync_traces', {})}>刷新</button></span>
   if (!work) return <Panel title="上次工作" action={tools} className="last-work">
     <Empty title={data.projects.length ? '还没有读到工作痕迹' : '登记项目后，这里会出现上次做了什么'} detail="来自已登记项目的 git 提交，以及 Cursor、Codex、WorkBuddy 的会话。" />
@@ -27,12 +48,14 @@ export function LastWork({ data, run }) {
       <summary><strong>{group.name}</strong><small>{[group.commits.length && `${group.commits.length} 次提交`, group.sessions.length && `${group.sessions.length} 段会话`, group.tasks.length && `完成 ${group.tasks.length} 项任务`].filter(Boolean).join(' · ')}</small></summary>
       <ul>
         {group.tasks.map(item => <li className="trace-row" key={item.id}><span className="trace-kind">任务</span><div><strong>{item.title}</strong><small>{timeLabel(item.at)}</small></div></li>)}
-        {group.sessions.map(item => <SessionRow key={item.id} item={item} />)}
-        {group.commits.map(item => <li className="trace-row" key={item.id} title={item.ref}><span className="trace-kind">提交</span><div><strong>{item.title}</strong><small>{timeLabel(item.at)} · {item.ref?.slice(0, 7)}</small></div></li>)}
+        {group.sessions.map(item => <SessionRow key={item.id} item={item} onReveal={reveal} />)}
+        {group.commits.map(item => <li className="trace-row" key={item.id} title={item.ref}><span className="trace-kind">提交</span><div><strong>{item.title}</strong><small>{timeLabel(item.at)} · <button className="trace-source" title="查看提交内容" onClick={() => open('show_commit', item)}>{item.ref?.slice(0, 7)}</button></small></div></li>)}
       </ul>
     </details>)}
-    {work.unassigned_sessions.length > 0 && <details className="trace-group"><summary><strong>其他会话</strong><small>{work.unassigned_sessions.length} 段 · 未归到已登记项目</small></summary><ul>{work.unassigned_sessions.map(item => <SessionRow key={item.id} item={item} />)}</ul></details>}
+    {work.unassigned_sessions.length > 0 && <details className="trace-group"><summary><strong>其他会话</strong><small>{work.unassigned_sessions.length} 段 · 未归到已登记项目</small></summary><ul>{work.unassigned_sessions.map(item => <SessionRow key={item.id} item={item} onReveal={reveal} />)}</ul></details>}
     {sync.error_count > 0 && <p className="muted">最近一次同步有 {sync.error_count} 个来源未读完：{sync.errors?.[0]?.error}</p>}
+    {sourceError && <p className="muted" role="alert">{sourceError}</p>}
+    {commit && <CommitDetail commit={commit} onClose={() => setCommit(null)} />}
   </div></Panel>
 }
 

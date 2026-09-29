@@ -20,7 +20,7 @@ from typing import Any
 from .common import local_day, stamp, synchronized
 
 TRACE_KINDS = ("trace_sync",)
-TRACE_ACTIONS = ("list_repo_candidates", "register_projects", "sync_traces")
+TRACE_ACTIONS = ("list_repo_candidates", "register_projects", "sync_traces", "reveal_trace_source", "show_commit")
 BACKFILL_DAYS = 14
 CANDIDATE_DAYS = 30
 MAX_COMMITS = 200
@@ -30,6 +30,7 @@ MAX_READ_PER_FILE = 32_000_000
 MAX_LINE_BYTES = 2_000_000
 TITLE_LIMIT = 120
 TEXT_LIMIT = 300
+COMMIT_STAT_LIMIT = 20_000
 TRACE_TYPES = ("TraceCommit", "TraceSession")
 CODEX_NEEDLES = (b'"session_meta"', b'"turn_context"', b'"role"')
 CODEX_REQUEST = "## My request for Codex:"
@@ -386,6 +387,35 @@ class TracesMixin:
             })
             count += 1
         return count
+
+    @synchronized
+    def _trace_event(self, trace_id: Any, event_type: str) -> dict[str, Any]:
+        row = self.db.execute("SELECT * FROM activity WHERE id=? AND type=?", (str(trace_id or ""), event_type)).fetchone()
+        if not row:
+            raise ValueError("找不到这条工作痕迹")
+        return {**dict(row), "details": json.loads(row["details"])}
+
+    def reveal_trace_source(self, p: dict[str, Any]) -> dict[str, Any]:
+        details = self._trace_event(p.get("id"), "TraceSession")["details"]
+        path = Path(details.get("ref") or "")
+        if details.get("source") not in ("cursor", "codex") or not path.is_file():
+            raise ValueError("原始会话文件已不存在")
+        subprocess.run(["open", "-R", str(path)], capture_output=True, timeout=10)
+        return {"path": str(path)}
+
+    def show_commit(self, p: dict[str, Any]) -> dict[str, Any]:
+        event = self._trace_event(p.get("id"), "TraceCommit")
+        project = self.get("project", event.get("project_id") or "")
+        ref = event["details"].get("ref") or ""
+        if not project or not project.get("workspace_path") or not re.fullmatch(r"[0-9a-f]{40}", ref):
+            raise ValueError("这条提交已无法定位到项目")
+        output = git(project["workspace_path"], "show", "--no-color", "--stat=72", "--format=%H%x1f%an%x1f%aI%x1f%s%x1f%b%x1e", ref)
+        head, _, stat = output.partition("\x1e")
+        parts = head.split("\x1f")
+        if len(parts) != 5:
+            raise ValueError("提交内容无法解析")
+        return {"hash": parts[0], "author": parts[1], "at": parts[2], "subject": parts[3], "body": parts[4].strip(),
+                "stat": stat.strip()[:COMMIT_STAT_LIMIT], "project": project["name"]}
 
     @synchronized
     def last_work(self) -> dict[str, Any] | None:
