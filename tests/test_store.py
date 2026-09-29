@@ -167,7 +167,7 @@ class StoreTests(unittest.TestCase):
         task = self.store.action("create_task", {"title": "完成页面", "project_id": project["id"]})
         self.store.action("create_decision", {"title": "优先每日闭环", "project_id": project["id"]})
         output = '{"priorities":[{"task_id":"' + task["id"] + '","reason":"符合当前项目决策"}]}'
-        with patch.object(self.store, "_codex_readonly", return_value=output) as model:
+        with patch("server.store.shutil.which", return_value="/usr/bin/codex"), patch.object(self.store, "_codex_readonly", return_value=output) as model:
             brief = self.store.action("generate_brief", {})
         self.assertEqual(brief["priorities"][0]["task_id"], task["id"])
         self.assertIn("优先每日闭环", model.call_args.args[0])

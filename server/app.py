@@ -10,6 +10,7 @@ import signal
 import sqlite3
 import tempfile
 import threading
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,6 +23,7 @@ from .workspace import MAX_ATTACHMENT_BYTES
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_BODY_BYTES = 1_000_000
+TRACE_SYNC_SECONDS = 600
 
 
 def is_local_origin(value: str) -> bool:
@@ -234,12 +236,19 @@ def daily_automation(store: Store, stop: threading.Event) -> None:
 
 def workspace_automation(store: Store, stop: threading.Event) -> None:
     """Keep short workspace jobs independent from slower RSS/daily generation."""
+    last_trace_sync = None
     while not stop.is_set():
         try:
             store.summary_tick()
             store.recall_tick()
         except (ValueError, OSError):
             pass
+        if last_trace_sync is None or time.monotonic() - last_trace_sync >= TRACE_SYNC_SECONDS:
+            last_trace_sync = time.monotonic()
+            try:
+                store.action("sync_traces", {})
+            except (ValueError, OSError) as exc:
+                print(f"Trace sync: {exc}", flush=True)
         stop.wait(10)
 
 

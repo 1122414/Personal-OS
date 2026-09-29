@@ -21,6 +21,7 @@ from .workspace import WorkspaceMixin, WORKSPACE_KINDS, WORKSPACE_ACTIONS
 from .learning import LearningMixin, LEARNING_KINDS, LEARNING_ACTIONS, PRIVATE_KINDS
 from .learning_summary import LearningSummaryMixin, SUMMARY_KINDS, SUMMARY_ACTIONS, SUMMARY_PRIVATE
 from .recall import RecallMixin, RECALL_KINDS, RECALL_ACTIONS
+from .traces import TracesMixin, TRACE_KINDS, TRACE_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
@@ -30,7 +31,7 @@ KINDS = (
     "project", "task", "daily_plan", "daily_log", "decision", "agent_run",
     "artifact", "intelligence_channel", "intelligence_item", "personal_rule",
     "knowledge_proposal", "daily_brief", "settings",
-) + WORKSPACE_KINDS + LEARNING_KINDS + SUMMARY_KINDS + RECALL_KINDS
+) + WORKSPACE_KINDS + LEARNING_KINDS + SUMMARY_KINDS + RECALL_KINDS + TRACE_KINDS
 TASK_STATES = {"Inbox", "Planned", "Running", "Review", "Done", "Blocked"}
 TASK_SOURCES = {"Manual", "Morning Brief", "Intelligence", "Project", "Agent Suggestion", "Yesterday Carryover"}
 DEFAULT_SETTINGS = {
@@ -38,12 +39,13 @@ DEFAULT_SETTINGS = {
     "obsidian_vault": "", "motion": "low",
     "workbuddy_root": "", "workbuddy_enabled": False, "workbuddy_since": "",
     "theme_transparency": 8, "daily_reports_folder": "每日AI",
+    "repo_scan_root": "~/My-Item",
 }
 
 
 
 
-class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
+class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, TracesMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +75,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
         self._stopping = False
         self._active_jobs = 0
         self._sync_lock = threading.Lock()
+        self._trace_lock = threading.Lock()
         self._recover_interrupted_runs()
         self.init_learning()
         self.init_summaries()
@@ -174,7 +177,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
     def state(self) -> dict[str, Any]:
         with self.lock:
             result = {
-                **{kind + "s": self.all(kind) for kind in KINDS if kind not in {"settings", "idea_review"} | PRIVATE_KINDS | SUMMARY_PRIVATE},
+                **{kind + "s": self.all(kind) for kind in KINDS if kind not in {"settings", "idea_review", "trace_sync"} | PRIVATE_KINDS | SUMMARY_PRIVATE},
                 "settings": {**DEFAULT_SETTINGS, **self.get("settings", "settings")},
                 "events": self.events(),
                 "today": local_day(),
@@ -190,6 +193,8 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
             result["backups"] = self.backups()
             result["personal_states"] = [self.personal_state_view(item) for item in result["personal_states"]]
             result["weekly_review"] = self.weekly_review_view()
+            result["last_work"] = self.last_work()
+            result["trace_sync"] = {k: v for k, v in self._trace_state().items() if k != "files"}
             summaries = {item["topic_id"]: item for item in self.all("learning_summary")}
             result["learning_topics"] = [{**topic, "brief": summaries.get(topic["id"], {}).get("sections", {}).get("brief", {}).get("body", ""),
                                           "summary_at": summaries.get(topic["id"], {}).get("generated_at")}
@@ -219,7 +224,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
 
     def log_events(self, day: str) -> list[dict[str, Any]]:
         return [event for event in self.events(day) if event["type"].startswith(
-            ("Task", "Agent", "Artifact", "Decision", "Obsidian", "DailyPlan", "ExternalRecord"))]
+            ("Task", "Agent", "Artifact", "Decision", "Obsidian", "DailyPlan", "ExternalRecord", "Trace"))]
 
     def log_view(self, log: dict[str, Any]) -> dict[str, Any]:
         known = set(log.get("source_event_ids", []))
@@ -306,10 +311,10 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
                 "generate_project_pulse": self.generate_project_pulse,
                 "summarize_log": self.summarize_log,
         }
-        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS, *RECALL_ACTIONS)})
+        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS, *RECALL_ACTIONS, *TRACE_ACTIONS)})
         if name not in dispatch:
             raise ValueError("未知操作")
-        if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy"):
+        if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy", *TRACE_ACTIONS):
             with self.lock:
                 self._active_jobs += 1
             try:
@@ -609,6 +614,14 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
             summary += "\n\n未完成：\n" + "\n".join(f"- {x}" for x in unfinished)
         if blocked:
             summary += "\n\n阻塞与执行异常（需要处理）：\n" + "\n".join(f"- {x}" for x in dict.fromkeys(blocked))
+        traces: dict[str, list[str]] = {}
+        for e in reversed(events):
+            if e["type"] in ("TraceCommit", "TraceSession"):
+                label = "提交" if e["type"] == "TraceCommit" else e["details"].get("label", "会话")
+                traces.setdefault(e["details"].get("project") or "未关联项目", []).append(f"{label}：{e['details'].get('title', '')}")
+        if traces:
+            summary += "\n\n代码与会话痕迹（仅供核对，不自动计为完成）：\n" + "\n".join(
+                f"- {project}\n" + "\n".join(f"  - {x}" for x in list(dict.fromkeys(items))[:20]) for project, items in traces.items())
         external = [e["details"].get("title", "外部资料") for e in reversed(events) if e["type"] in ("ExternalRecordImported", "ExternalRecordUpdated")]
         if external:
             summary += "\n\n外部资料收录/更新（不计为任务完成）：\n" + "\n".join(f"- {x}" for x in dict.fromkeys(external))
@@ -780,9 +793,11 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin):
 
     def save_settings(self, p: dict[str, Any]) -> dict[str, Any]:
         item = self.get("settings", "settings") or {"id": "settings", **DEFAULT_SETTINGS}
-        for field in ("theme_mode", "manual_theme", "nickname", "obsidian_vault", "motion", "workbuddy_root", "workbuddy_since"):
+        for field in ("theme_mode", "manual_theme", "nickname", "obsidian_vault", "motion", "workbuddy_root", "workbuddy_since", "repo_scan_root"):
             if field in p:
                 item[field] = str(p[field]).strip()
+        if "repo_scan_root" in p and not Path(item["repo_scan_root"] or "~/My-Item").expanduser().is_dir():
+            raise ValueError("仓库扫描目录不存在")
         if item["theme_mode"] not in ("auto", "manual") or item["manual_theme"] not in ("morning", "afternoon", "night"):
             raise ValueError("主题设置无效")
         item["nickname"] = item["nickname"][:50]
