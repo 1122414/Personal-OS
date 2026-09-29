@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { action, loadState } from './api.js'
+import useWorkspaceData from './useWorkspaceData.js'
 import { Button, Field, Modal, NAV } from './ui.jsx'
 import Home from './pages/Home.jsx'
 import Tasks from './pages/Tasks.jsx'
@@ -108,44 +108,46 @@ function FormModal({ modal, data, run, close }) {
 }
 
 export default function App() {
-  const [data, setData] = useState(null)
   const [page, setPage] = useState(initialPage)
   const [focus, setFocus] = useState(() => window.location.hash.split('/')[1] || null)
   const [modal, setModal] = useState(null)
   const [search, setSearch] = useState('')
   const [notice, setNotice] = useState(null)
-  const [pending, setPending] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const { data, pending, loading, refresh, mutate } = useWorkspaceData(setNotice)
   const [previewTransparency, setPreviewTransparency] = useState(null)
   const content = useRef(null)
   useEffect(() => { content.current?.scrollTo(0, 0) }, [page, focus])
   useClock()
-  useEffect(() => { loadState().then(setData).catch(error => setNotice({ error: error.message })).finally(() => setLoading(false)) }, [])
-  useEffect(() => { const id = setInterval(() => loadState().then(setData).catch(() => {}), data?.agent_runs?.some(item => item.status === 'Running') ? 8000 : 30000); return () => clearInterval(id) }, [data?.agent_runs?.some(item => item.status === 'Running')])
+  useEffect(() => {
+    if (!notice?.message) return
+    const timer = setTimeout(() => setNotice(null), 3000)
+    return () => clearTimeout(timer)
+  }, [notice])
   useEffect(() => { const handler = () => { setPage(initialPage()); setFocus(window.location.hash.split('/')[1] || null) }; window.addEventListener('hashchange', handler); return () => window.removeEventListener('hashchange', handler) }, [])
   useEffect(() => { const handler = event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); document.getElementById('global-command')?.focus() } if (event.key === 'Escape') { setModal(null); setSearch('') } }; window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler) }, [])
   const settings = data?.settings || { theme_mode: 'auto', manual_theme: 'morning', nickname: '博士' }
   const theme = settings.theme_mode === 'manual' ? settings.manual_theme : themeByTime()
   const nickname = settings.nickname?.trim()
 
-  async function refresh() { const next = await loadState(); setData(next); return next }
-
   function navigate(next, id = null) { setPage(next); setFocus(id?.split('/')[0] || null); window.location.hash = id ? `${next}/${id}` : next; setSearch('') }
   function open(kind, value) { setModal({ kind, value }); setSearch('') }
-  async function run(name, payload) {
-    setPending(name)
+  async function run(name, payload, { quiet = false } = {}) {
     try {
-      const response = await action(name, payload)
-      setData(response.state)
+      const response = await mutate(name, payload)
       const errors = response.result?.errors
-      setNotice(errors?.length ? { error: `新增 ${response.result.added || 0} 条；${errors.length} 个来源失败：${errors.map(item => item.error).join('；')}` } : { message: response.result?.message || (name === 'refresh_channel' ? (response.result.reason || `已新增 ${response.result.added} 条`) : '已保存') })
-      setTimeout(() => setNotice(null), 3000)
+      const warnings = []
+      if (errors?.length) warnings.push(`新增 ${response.result.added || 0} 条；${errors.length} 个来源失败：${errors.map(item => item.error).join('；')}`)
+      if (response.refreshError) warnings.push('操作已完成，但界面刷新失败；请稍后刷新，无需重复提交。')
+      if (warnings.length) {
+        setNotice({ error: warnings.join('；') })
+      } else if (!quiet) {
+        setNotice({ message: response.result?.message || (name === 'refresh_channel' ? (response.result.reason || `已新增 ${response.result.added} 条`) : '已保存') })
+      }
       return response.result
     } catch (error) {
+      if (quiet) throw error
       setNotice({ error: error.message })
       return null
-    } finally {
-      setPending(null)
     }
   }
 

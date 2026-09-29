@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { action } from './api.js'
 import Markdown from './Markdown.jsx'
 import { Button, Empty, Field, Modal, dateLabel, timeLabel } from './ui.jsx'
 import { ExportNote } from './workspace.jsx'
@@ -17,7 +16,7 @@ function Source({ source, detail, data, topicId }) {
   return <details className="summary-source"><summary>{title}{source.page ? ` · 第 ${source.page} 页` : ''}</summary><small>来源版本 {source.revision}{source.partial ? ' · 仅纳入部分原文' : ''}</small>{exists ? <a href={href} target={source.kind === 'material' ? '_blank' : undefined} rel="noreferrer">打开原文{source.page ? ` · 第 ${source.page} 页` : ''} ↗</a> : <p className="inline-error">原始对象已不在当前数据中，以下为整理时快照。</p>}<Markdown text={source.text || '主题目标尚未填写。'} /></details>
 }
 
-function SectionEditor({ topicId, sectionKey, section, reload, close }) {
+function SectionEditor({ topicId, sectionKey, section, run, reload, close }) {
   const [body, setBody] = useState(section?.body || '')
   const [owner, setOwner] = useState(section?.owner || 'ai_suggestion')
   const [status, setStatus] = useState('已保存')
@@ -36,8 +35,8 @@ function SectionEditor({ topicId, sectionKey, section, reload, close }) {
     busy.current = true; setStatus('正在保存…')
     const snapshot = { ...draft.current }
     try {
-      const response = await action('edit_summary_section', { id: topicId, key: sectionKey, expected_revision: revision.current, ...snapshot })
-      revision.current = response.result.revision
+      const result = await run('edit_summary_section', { id: topicId, key: sectionKey, expected_revision: revision.current, ...snapshot }, { quiet: true })
+      revision.current = result.revision
       saved.current = snapshot
       if (mounted.current) { setStatus('已自动保存 · 后续 AI 更新会保留你的修改'); setError(''); reload() }
       return !dirty()
@@ -82,7 +81,7 @@ export default function LearningSummary({ topic, detail, data, run, reload, setT
     </>}
     {summary.candidates.length > 0 && <section className="summary-candidates"><h3>候选变化 · 你的修改已保留</h3>{summary.candidates.map(candidate => <details key={candidate.id}><summary>{SECTION_TITLES[candidate.key]} · 来源截至 {timeLabel(candidate.cutoff)}</summary><div className="candidate-compare"><div><small>当前内容</small><Markdown text={report?.sections[candidate.key]?.body || '（为空）'} /></div><div><small>AI 候选</small><Markdown text={candidate.generated.body || '（建议留空）'} />{candidate.generated.sources.map(source => <Source key={source.ref} source={source} detail={detail} data={data} topicId={topic.id} />)}</div></div><div className="workspace-actions"><Button onClick={async () => { if (await run('resolve_summary_candidate', { id: candidate.id, choice: 'keep' })) reload() }}>保留我的版本</Button><Button onClick={async () => { if (await run('resolve_summary_candidate', { id: candidate.id, choice: 'accept', expected_revision: report?.sections[candidate.key]?.revision || 0 })) reload() }}>采纳候选</Button></div></details>)}</section>}
   </article><aside className="summary-sidebar"><section><h3>来源</h3>{sources.length ? sources.map(source => <Source key={source.ref} source={source} detail={detail} data={data} topicId={topic.id} />) : <p className="muted">整理后可以定位到原话、资料与页码。</p>}</section><section><h3>关联记录</h3>{topic.record_ids.map(id => data.records.find(record => record.id === id)).filter(Boolean).map(record => <a className="related-record" key={record.id} href={`#records/${record.id}`}>{record.title}<small>你已关联到这个主题 · 查看原文 →</small></a>)}</section><RelatedRecords detail={detail} data={data} run={run} reload={reload} topicId={topic.id} /><div className="summary-footer"><small>总结由 Codex 整理 · 可修改<br />Personal OS 保存主版本</small><Button onClick={() => setHistory(true)}>历史版本</Button>{report && <ExportNote kind="learning_topic" id={topic.id} run={run} />}</div></aside>
-    {editing && <SectionEditor key={editing} topicId={topic.id} sectionKey={editing} section={report?.sections[editing]} reload={reload} close={() => setEditing(null)} />}
+    {editing && <SectionEditor key={editing} topicId={topic.id} sectionKey={editing} section={report?.sections[editing]} run={run} reload={reload} close={() => setEditing(null)} />}
     {history && <SummaryHistory summary={summary} topicId={topic.id} run={run} reload={reload} close={() => setHistory(false)} />}
   </div>
 }
