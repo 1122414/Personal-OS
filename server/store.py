@@ -50,6 +50,7 @@ DEFAULT_SETTINGS = {
 }
 RUN_LOG_LINES = 40
 RUN_LOG_LINE_LIMIT = 300
+FOLLOW_UP_TAIL = "请继续在同一工作目录内完成，最后列出这一轮的实际改动、验证结果和仍需人工审核的事项。"
 
 
 
@@ -302,6 +303,7 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                 "start_agent": self.start_agent,
                 "cancel_agent": self.cancel_agent,
                 "review_agent": self.review_agent,
+                "send_agent_message": self.send_agent_message,
                 "generate_brief": self.generate_brief,
                 "scan_obsidian": self.scan_obsidian,
                 "refresh_channel": self.refresh_channel,
@@ -949,14 +951,10 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                 other = Path(active["workspace_path"]).resolve()
                 if workspace.is_relative_to(other) or other.is_relative_to(workspace):
                     raise ValueError("该工作目录已有执行或正在停止的任务，请等待结束")
-        instruction = (p.get("instruction") or "").strip()
-        if len(instruction) > 4000:
-            raise ValueError("修改要求过长")
-        prompt = (
-            f"任务：{task['title']}\n\n描述与完成标准：\n{task.get('description') or task['title']}\n"
-            f"\n补充修改要求：\n{instruction}\n" if instruction else
-            f"任务：{task['title']}\n\n描述与完成标准：\n{task.get('description') or task['title']}\n"
-        )
+        message = (p.get("message") or p.get("instruction") or "").strip()
+        if len(message) > 4000:
+            raise ValueError("消息过长")
+        prompt = f"任务：{task['title']}\n\n描述与完成标准：\n{task.get('description') or task['title']}\n"
         prompt += "\n请在指定工作目录内完成任务，最后清楚列出实际改动、验证结果和仍需人工审核的事项。"
         context = {
             "project": {"name": project["name"], "description": project.get("description", ""), "stage": project.get("stage", "")},
@@ -964,12 +962,21 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
             "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"] and r["category"] in ("Agent", "General")],
         }
         prompt += "\n以下是用户明确记录的项目约束与参考规则，请遵守；若与任务矛盾请说明阻塞：\n" + json.dumps(context, ensure_ascii=False)
-        previous = next((r for r in self.all("agent_run") if r["task_id"] == task["id"]), None)
+        runs = [r for r in self.all("agent_run") if r["task_id"] == task["id"]]
+        previous = runs[0] if runs else None
         rerun_id = previous["external_id"] if p.get("rerun") and runtime.remote and previous and previous.get("runtime") == runtime.id and previous.get("external_id") else ""
+        session, full_prompt = "", prompt
+        if message:
+            full_prompt = prompt + self._conversation_history(task, runs) + f"\n\n用户的新消息：\n{message}\n" + FOLLOW_UP_TAIL
+            last = next((r for r in runs if r.get("external_id")), None)
+            if runtime.resumable and last and last.get("runtime") == runtime.id:
+                session = last["external_id"]
+        prompt = f"{message}\n\n{FOLLOW_UP_TAIL}" if session else full_prompt
         before = self._workspace_snapshot(workspace)
         run = self.put("agent_run", {"task_id": task["id"], "agent_id": runtime.label, "runtime": runtime.id, "external_id": rerun_id, "log_tail": [],
                                      "status": "Running", "started_at": stamp(), "finished_at": None, "result": "", "error": "",
-                                     "workspace_path": str(workspace), "before_snapshot": before})
+                                     "workspace_path": str(workspace), "before_snapshot": before,
+                                     "message": message or None, "resumed": bool(session), "transcript": []})
         task["status"] = "Running"
         task["executor_type"] = "agent"
         task["runtime"] = runtime.id
@@ -978,10 +985,31 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
         self.put("task", task)
         self.event("AgentRunStarted", "agent_run", run["id"], task.get("project_id"), {"title": task["title"], "agent": runtime.label})
         worker = threading.Thread(target=self._run_agent, args=(run["id"], prompt, before, executable),
-                                  kwargs={"external_id": rerun_id, "rerun": bool(rerun_id)}, daemon=True)
+                                  kwargs={"external_id": rerun_id, "rerun": bool(rerun_id), "session": session, "fallback_prompt": full_prompt}, daemon=True)
         self._workers[run["id"]] = worker
         worker.start()
         return {k: v for k, v in run.items() if k != "before_snapshot"}
+
+    @staticmethod
+    def _conversation_history(task: dict[str, Any], runs: list[dict[str, Any]]) -> str:
+        """Earlier turns, oldest first, for agents that start a fresh session."""
+        turns = []
+        for run in reversed(runs):
+            reply = "\n".join(e["text"] for e in run.get("transcript") or [] if e.get("type") == "text") or run.get("result") or run.get("error") or "（没有回复）"
+            asked = run.get("message") or "按上面的任务开始执行。"
+            turns.append(f"用户：{asked[:2000]}\n{run.get('agent_id') or 'Agent'}：{reply[-4000:]}")
+        return "\n\n此前的对话（最早的在前）：\n" + "\n\n".join(turns[-10:]) if turns else ""
+
+    def send_agent_message(self, p: dict[str, Any]) -> dict[str, Any]:
+        task = self.get("task", p.get("task_id") or "")
+        if not task:
+            raise ValueError("任务不存在")
+        text = required_text(p.get("text"), "消息", 4000)
+        if task["status"] not in ("Review", "Blocked"):
+            raise ValueError("Agent 回复后才能接着说")
+        if not any(r["task_id"] == task["id"] for r in self.all("agent_run")):
+            raise ValueError("请先派出这个任务")
+        return self.start_agent({"task_id": task["id"], "message": text, "runtime": p.get("runtime")})
 
     @staticmethod
     def _workspace_snapshot(workspace: Path) -> dict[str, tuple[int, int]]:
@@ -1033,7 +1061,7 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
         self.put("agent_run", run)
 
     def _run_agent(self, run_id: str, prompt: str, before: dict[str, tuple[int, int]], executable: str,
-                   external_id: str = "", rerun: bool = False) -> None:
+                   external_id: str = "", rerun: bool = False, session: str = "", fallback_prompt: str = "") -> None:
         with self.lock:
             run = self.get("agent_run", run_id)
         if not run or run["status"] != "Running" or self._stopping:
@@ -1057,8 +1085,18 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                     current["external_id"] = issue
                     self.put("agent_run", current)
 
-        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, lambda text: self._agent_log(run_id, text),
-                              self._settings(), external_id, rerun, remember)
+        log = lambda text: self._agent_log(run_id, text)
+        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, log, self._settings(), external_id, rerun, remember, session=session)
+        if session and not outcome.succeeded and not outcome.transcript and not outcome.detached:
+            with self.lock:
+                current = self.get("agent_run", run_id)
+                retry = bool(current and current["status"] == "Running" and not self._stopping)
+                if retry:
+                    current.update({"resumed": False, "resume_failed": True})
+                    self.put("agent_run", current)
+            if retry:
+                log("原会话无法续接，已开新会话并附上之前的对话")
+                outcome = runtime.run(executable, fallback_prompt, Path(run["workspace_path"]), started, log, self._settings(), "", False, remember)
         with self.lock:
             self._processes.pop(run_id, None)
             self._log_flushed.pop(run_id, None)
@@ -1080,6 +1118,8 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                 run["external_id"] = outcome.external_id
             if run and outcome.outside_writes:
                 run["outside_writes"] = outcome.outside_writes
+            if run and outcome.transcript:
+                run["transcript"] = outcome.transcript
             if not run or run["status"] != "Running":
                 if run:
                     self.put("agent_run", run)
@@ -1130,9 +1170,10 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
 
     def review_agent(self, p: dict[str, Any]) -> dict[str, Any]:
         task = self.get("task", p.get("task_id") or "")
-        if not task or task["status"] != "Review":
-            raise ValueError("任务不在待审核状态")
         choice = p.get("choice")
+        finished_with_failure = task and task["status"] == "Blocked" and choice == "approve" and any(r["task_id"] == task["id"] for r in self.all("agent_run"))
+        if not task or (task["status"] != "Review" and not finished_with_failure):
+            raise ValueError("任务不在等你回复的状态")
         if choice == "approve":
             task["status"] = "Done"
             task["review_status"] = "Approved"

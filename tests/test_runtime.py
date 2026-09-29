@@ -11,19 +11,27 @@ from pathlib import Path
 from unittest.mock import patch
 
 from agent_fakes import FakeAgentProcess
-from server.runtime import RUNTIMES, Runtime, execute, stop_process
+from server.runtime import RUNTIMES, Runtime, execute, say, stop_process, tool
 from server.store import Store
 
 
 class FakeRuntime(Runtime):
     id, label, binary = "fake", "假通道", "fake-agent"
+    resumable = True
 
     def command(self, executable, workspace, output, prompt):
         return [executable, "--cwd", str(workspace)]
 
+    def resume_args(self, session):
+        return ["--resume", session]
+
     def progress(self, line, state):
         event = json.loads(line)
         state["external_id"] = event.get("session", state.get("external_id"))
+        if "say" in event:
+            say(state, event["say"])
+        if "tool" in event:
+            tool(state, event["tool"])
         if "result" in event:
             state["result"] = event["result"]
         if "error" in event:
@@ -93,6 +101,68 @@ class RuntimeTests(unittest.TestCase):
         self.wait_run(self.start(Process)["id"])
         rerun = self.store.action("review_agent", {"task_id": self.task["id"], "choice": "revise", "instruction": "补测试"})
         self.assertEqual(self.wait_run(rerun["id"])["runtime"], "fake")
+
+    def first_turn(self):
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                return lines({"session": "s-1", "say": "先看一下结构"}, {"tool": "Bash ls"}, {"say": "改好了"}, {"result": "改好了"}), "", 0
+
+        run = self.wait_run(self.start(Process)["id"])
+        self.assertEqual(run["transcript"], [{"type": "text", "text": "先看一下结构"}, {"type": "tool", "text": "Bash ls"}, {"type": "text", "text": "改好了"}])
+        self.assertIsNone(run["message"])
+        return run
+
+    def test_follow_up_continues_the_same_session_with_only_the_new_message(self):
+        self.first_turn()
+        seen = {}
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                seen.update(command=self.command, prompt=prompt)
+                return lines({"session": "s-1", "say": "测试也加上了"}), "", 0
+
+        self.patch_runtime(Process)
+        run = self.wait_run(self.store.action("send_agent_message", {"task_id": self.task["id"], "text": "再加个测试"})["id"])
+        self.assertEqual(seen["command"][-2:], ["--resume", "s-1"])
+        self.assertTrue(seen["prompt"].startswith("再加个测试"))
+        self.assertNotIn("任务：派出去", seen["prompt"])
+        self.assertEqual((run["message"], run["resumed"], run["status"]), ("再加个测试", True, "Finished"))
+        self.assertEqual(self.store.get("task", self.task["id"])["status"], "Review")
+
+    def test_lost_session_falls_back_to_a_new_one_that_carries_the_conversation(self):
+        self.first_turn()
+        attempts = []
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                attempts.append((self.command, prompt))
+                if "--resume" in self.command:
+                    return "", 'Session "s-1" not found\n', 1
+                return lines({"session": "s-2", "say": "接上了"}), "", 0
+
+        self.patch_runtime(Process)
+        run = self.wait_run(self.store.action("send_agent_message", {"task_id": self.task["id"], "text": "再加个测试"})["id"])
+        self.assertEqual(len(attempts), 2)
+        self.assertNotIn("--resume", attempts[1][0])
+        for text in ("任务：派出去", "此前的对话", "改好了", "用户的新消息：\n再加个测试"):
+            self.assertIn(text, attempts[1][1])
+        self.assertEqual((run["status"], run["resumed"], run["resume_failed"], run["external_id"]), ("Finished", False, True, "s-2"))
+        self.assertIn("原会话无法续接，已开新会话并附上之前的对话", run["log_tail"])
+
+    def test_messages_need_a_finished_turn_and_failed_turns_can_still_be_accepted(self):
+        with self.assertRaisesRegex(ValueError, "Agent 回复后"):
+            self.store.action("send_agent_message", {"task_id": self.task["id"], "text": "你好"})
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                return "", "boom\n", 1
+
+        self.wait_run(self.start(Process)["id"])
+        self.assertEqual(self.store.get("task", self.task["id"])["status"], "Blocked")
+        with self.assertRaisesRegex(ValueError, "消息"):
+            self.store.action("send_agent_message", {"task_id": self.task["id"], "text": "  "})
+        task = self.store.action("review_agent", {"task_id": self.task["id"], "choice": "approve"})
+        self.assertEqual(task["status"], "Done")
 
     def test_nonzero_exit_or_reported_error_fails_and_blocks(self):
         cases = [(lines({"log": "开始"}), "boom\n", 1, "boom"), (lines({"error": "额度用完"}), "", 0, "额度用完")]
@@ -306,6 +376,8 @@ class SandboxedRunTests(unittest.TestCase):
         self.assertEqual((run["status"], run["runtime"], run["agent_id"]), ("Finished", "kimi", "Kimi"))
         self.assertEqual(run["outside_writes"], [str(Path("/tmp/pos-trial/outside/escape.txt").resolve())])
         self.assertTrue(run["external_id"].startswith("session_"))
+        self.assertEqual({entry["type"] for entry in run["transcript"]}, {"text", "tool"})
+        self.assertEqual(RUNTIMES["kimi"].resume_args(run["external_id"]), ["-S", run["external_id"]])
 
     def test_missing_sandbox_refuses_to_run_unconfined(self):
         self.sandbox.unlink()
