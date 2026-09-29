@@ -18,7 +18,7 @@ function AgentRuns({ runs, agents }) {
   const meta = agents.find(agent => agent.id === (runs[0].runtime || 'codex'))
   const label = meta?.label || runs[0].agent_id
   return <div className="detail-section"><h3>执行记录</h3>
-    <p className="notice">{label} {meta?.sandboxed ? '在系统沙箱中运行，只能写入工作目录。' : '直接修改工作目录。'}结果审核不撤销已有改动，失败或取消后也请核对产物。</p>
+    <p className="notice">{label} {meta?.remote ? '在 Multica 的执行环境中运行，只有它改动本机工作目录时才会记录产物。' : meta?.sandboxed ? '在系统沙箱中运行，只能写入工作目录。' : '直接修改工作目录。'}结果审核不撤销已有改动，失败或取消后也请核对产物。</p>
     {runs.map((item, index) => <div className="run-card" key={item.id}>
       <div className="run-head"><strong>{item.agent_id}</strong><span className={`run-status run-${item.status}`}>{RUN_STATUS[item.status] || item.status}</span><span>{timeLabel(item.started_at)} · {runDuration(item)}</span></div>
       {item.outside_writes?.length > 0 && <p className="notice">尝试写入工作目录以外：{item.outside_writes.join('、')}</p>}

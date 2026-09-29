@@ -18,6 +18,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -54,6 +55,7 @@ class Outcome:
     error: str = ""
     external_id: str = ""
     outside_writes: list[str] | None = None
+    detached: bool = False
 
 
 def _sandbox_string(path: str) -> str:
@@ -102,6 +104,7 @@ class Runtime:
     binary = ""
     state_paths: list[str] | None = None
     prompt_in_argv = False
+    remote = False
 
     @property
     def setting(self) -> str:
@@ -116,6 +119,11 @@ class Runtime:
 
     def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
         raise NotImplementedError
+
+    def run(self, executable: str, prompt: str, workspace: Path, on_start: Callable[[Any], None],
+            on_log: Callable[[str], None], settings: dict[str, Any], external_id: str = "", rerun: bool = False,
+            on_external_id: Callable[[str], None] = lambda _: None) -> Outcome:
+        return execute(self, executable, prompt, workspace, on_start, on_log)
 
     def progress(self, line: str, state: dict[str, Any]) -> str | None:
         """Turn one stdout line into a log line; may record result/error/external_id in state."""
@@ -203,6 +211,126 @@ class ClaudeRuntime(Runtime):
         return None
 
 
+class MulticaHandle:
+    """Stands in for a process: cancel asks the Multica server to stop; detach only stops polling."""
+
+    def __init__(self, base: list[str]):
+        self.base, self.issue, self.task = base, "", ""
+        self.cancelled, self.detached, self.wake = threading.Event(), threading.Event(), threading.Event()
+
+    def poll(self) -> int | None:
+        return 0 if self.cancelled.is_set() or self.detached.is_set() else None
+
+    def terminate(self) -> None:
+        if self.cancelled.is_set():
+            return
+        self.cancelled.set()
+        self.wake.set()
+        if self.task:
+            threading.Thread(target=_multica, args=(self.base, "issue", "cancel-task", self.task, "--issue", self.issue), daemon=True).start()
+
+    kill = terminate
+
+    def detach(self) -> None:
+        self.detached.set()
+        self.wake.set()
+
+
+def _multica(base: list[str], *args: str, stdin: str | None = None) -> Any:
+    done = subprocess.run([*base, *args, "--output", "json"], input=stdin, capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        raise RuntimeError(_brief(done.stderr or done.stdout, 300) or f"退出码 {done.returncode}")
+    return json.loads(done.stdout) if done.stdout.strip() else None
+
+
+def _items(value: Any, *keys: str) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        value = next((value[key] for key in keys if isinstance(value.get(key), list)), [])
+    return [item for item in value or [] if isinstance(item, dict)]
+
+
+class MulticaRuntime(Runtime):
+    """Open-source Multica, driven only through its CLI JSON output.
+
+    The JSON field names below come from hand-written samples and have not yet
+    been checked against a real Multica server.
+    """
+    id, label, binary = "multica", "Multica", "multica"
+    remote = True
+    poll_seconds = 5.0
+    DONE = {"completed", "complete", "succeeded", "success", "done", "finished"}
+    FAILED = {"failed", "error", "errored", "cancelled", "canceled", "timeout", "timed_out"}
+
+    def command_path(self, settings: dict[str, Any]) -> str | None:
+        if not (settings.get("multica_agent") or "").strip():
+            return None
+        return resolve_command(settings.get(self.setting) or "")
+
+    def run(self, executable, prompt, workspace, on_start, on_log, settings, external_id="", rerun=False, on_external_id=lambda _: None):
+        base = [executable, *(["--profile", settings["multica_profile"]] if settings.get("multica_profile") else [])]
+        handle = MulticaHandle(base)
+        handle.issue = external_id
+        on_start(handle)
+        state: dict[str, Any] = {"workspace": workspace.resolve()}
+        try:
+            seen: set[str] = set()
+            if rerun and external_id:
+                seen = {str(item.get("id")) for item in _items(_multica(base, "issue", "runs", external_id), "runs", "data", "items")}
+                _multica(base, "issue", "rerun", external_id)
+                on_log(f"已请求 Multica 重跑 {external_id}")
+            elif not external_id:
+                title = prompt.splitlines()[0].removeprefix("任务：").strip()[:200] or "Personal OS 任务"
+                created = _multica(base, "issue", "create", "--title", title, "--description-stdin",
+                                   "--assignee", settings["multica_agent"], stdin=f"{prompt}\n\nPersonal OS 本地工作目录：{workspace}")
+                handle.issue = str((created or {}).get("id") or "")
+                if not handle.issue:
+                    raise RuntimeError("Multica 没有返回 issue 编号")
+                on_external_id(handle.issue)
+                on_log(f"已创建 Multica issue {(created or {}).get('identifier') or handle.issue}，指派给 {settings['multica_agent']}")
+            return self._follow(base, handle, seen, state, on_log)
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+            return Outcome(False, error=f"Multica 调用失败：{exc}", external_id=handle.issue)
+
+    def _follow(self, base, handle, seen, state, on_log) -> Outcome:
+        since, deadline, issue = 0, time.monotonic() + RUN_TIMEOUT, handle.issue
+        while True:
+            if handle.detached.is_set():
+                return Outcome(False, external_id=issue, detached=True)
+            if handle.cancelled.is_set():
+                return Outcome(False, error="已取消 Multica 执行", external_id=issue)
+            runs = [item for item in _items(_multica(base, "issue", "runs", issue), "runs", "data", "items") if str(item.get("id")) not in seen]
+            task = max(runs, key=lambda item: str(item.get("created_at") or item.get("started_at") or ""), default=None)
+            if task:
+                if handle.task != str(task.get("id")):
+                    handle.task, since = str(task.get("id")), 0
+                for message in _items(_multica(base, "issue", "run-messages", handle.task, "--issue", issue, "--since", str(since)), "messages", "data", "items"):
+                    since = max(since, int(message.get("seq") or message.get("sequence") or since))
+                    text = self._message(message, state)
+                    if text:
+                        on_log(text)
+                status = str(task.get("status") or "").lower()
+                extra = {"external_id": issue, "outside_writes": state.get("outside_writes")}
+                if status in self.DONE:
+                    return Outcome(True, result=state.get("result") or str(task.get("result") or ""), **extra)
+                if status in self.FAILED:
+                    return Outcome(False, error=str(task.get("error") or f"Multica 执行结束：{status}"), result=state.get("result", ""), **extra)
+            if time.monotonic() > deadline:
+                handle.terminate()
+                return Outcome(False, error="Multica 执行超时", external_id=issue)
+            handle.wake.wait(self.poll_seconds)
+
+    @staticmethod
+    def _message(message: dict[str, Any], state: dict[str, Any]) -> str | None:
+        kind = str(message.get("type") or message.get("kind") or "").lower()
+        text = message.get("content") or message.get("text") or message.get("output") or ""
+        tool = message.get("tool") or message.get("tool_name") or message.get("name")
+        if tool and "result" not in kind:
+            return _tool_line(str(tool), message.get("input") if isinstance(message.get("input"), dict) else {}, state)
+        if kind in ("text", "assistant", "message", "final", "result") and text:
+            state["result"] = str(text)
+        return _brief(f"↳ {text}" if "result" in kind and tool else text) or None
+
+
 def _json(text: str) -> Any:
     try:
         value = json.loads(text)
@@ -211,7 +339,7 @@ def _json(text: str) -> Any:
     return value if isinstance(value, dict) else None
 
 
-RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime(), KimiRuntime(), ClaudeRuntime())}
+RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime(), KimiRuntime(), ClaudeRuntime(), MulticaRuntime())}
 
 
 def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,

@@ -48,6 +48,19 @@ Agent 任务需要在所属项目中设置本地工作目录，且本机已登�
 
 Agent 执行时会将任务描述交给 Codex；AI 建议会发送相关任务、项目、决策与规则上下文。系统对工作目录做执行前后快照，在 Review 中列出检测到的文件变更，跳过隐藏目录和常见依赖/构建目录，最多记录 20,000 个文件。确认 Agent 结果前应核对真实工作目录。HTTP API 只监听本机，并拒绝非本机来源的写请求。
 
+### 开源 Multica 通道（可选，尚未在真实服务端验证）
+
+Multica 通道只调用 `multica` 命令行的 JSON 输出（`issue create / runs / run-messages / cancel-task / rerun`），不读取 Multica 数据库。一个 Personal OS 任务对应一个 Multica issue，issue 编号记在执行记录上；客户端关闭时 Multica 上的执行继续进行，重启后按编号继续跟踪，不标为中断。解析所用的 JSON 字段来自手写样例（CLI 0.4.14 的帮助说明），**尚未与真实服务端核对**，首次接入时请先用一个小任务验证。
+
+Multica 自建服务端需要 Docker（PostgreSQL 17、Go 后端、Next.js 前端），适合能使用 Docker 的机器：
+
+1. 按 Multica 开源仓库的自建说明，用 Docker 启动服务端（CLI 默认连接后端 `http://localhost:8080`、前端 `http://localhost:3000`）。
+2. 安装命令行（macOS 可用 `brew install multica`），用独立配置档连接自建服务端并登录、启动本机 daemon：`multica --profile work setup self-host`；服务端不在本机时加 `--server-url` 和 `--app-url`。
+3. 在 Multica 中配置 Agent 与仓库后，用 `multica --profile work agent list --output json` 确认要指派的 Agent 名称。
+4. 在 Personal OS「设置 → 连接器与运行环境」填写 Multica 命令路径（如 `/opt/homebrew/bin/multica`）、配置档 `work` 和 Agent 名称，保存后任务即可选择 Multica 派出。命令路径或 Agent 名称留空时不启用。
+
+Multica 的 Agent 在 Multica daemon 所在环境执行。只有它改动的是项目设置中的本机工作目录，Personal OS 才能在审核中列出文件变更；否则请在 Multica 中核对改动。
+
 Intelligence 频道（当前已从界面收起）支持每行一个 RSS/Atom 来源地址、关注关键词、排除关键词和每日上限。刷新后，来源时间、收录时间、刷新错误与用户反馈保存在本地；忽略项不进入简报，收藏/忽略暂不训练推荐模型。
 
 AI 日报直接读取 Obsidian 已落盘的 Markdown：默认 `每日AI/YYYY-MM-DD/*.md`，可在 Settings → AI 日报来源修改 vault 内的相对子目录。首页展示最新一期入口，导航中的「AI 日报」页支持按日期阅读全文；每 30 秒检查文件更新，也可手动刷新。今天尚无报告时明确显示最新报告日期。报告只读，工作台中的勾选框只展示原笔记状态；不会修改原笔记。支持常用 Markdown、表格、代码和 HTTP(S) 原文链接，HTML 作为文字显示、图片不自动加载。最多展示最近 366 个日期目录和 2,000 篇，单篇上限 512 KB，超限显示提示。

@@ -28,7 +28,7 @@ from .obsidian_home import ObsidianHomeMixin, HOME_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
-from .runtime import RUNTIMES, execute, resolve_command, stop_process
+from .runtime import RUNTIMES, resolve_command, stop_process
 
 
 KINDS = (
@@ -45,6 +45,7 @@ DEFAULT_SETTINGS = {
     "theme_transparency": 8, "daily_reports_folder": "每日AI",
     "repo_scan_root": "~/My-Item",
     **{runtime.setting: "" for runtime in RUNTIMES.values()},
+    "multica_profile": "", "multica_agent": "",
 }
 RUN_LOG_LINES = 40
 RUN_LOG_LINE_LIMIT = 300
@@ -98,6 +99,10 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 if run.get("status") != "Running":
                     continue
                 process = self._processes.get(run["id"])
+                if self._resumable(run):
+                    if process:
+                        process.detach()
+                    continue
                 if process and process.poll() is None:
                     stop_process(process)
                 run["status"] = "Interrupted"
@@ -816,6 +821,11 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 if value and not resolve_command(value):
                     raise ValueError(f"找不到 {runtime.label} 命令：{value}")
                 item[runtime.setting] = value
+        for field in ("multica_profile", "multica_agent"):
+            if field in p:
+                item[field] = str(p[field] or "").strip()[:100]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]*", item.get("multica_profile", "")):
+            raise ValueError("Multica 配置档名称只能包含字母、数字、点、下划线和连字符")
         if item.get("repo_scan_root", previous_scan_root) != previous_scan_root and not Path(item["repo_scan_root"] or "~/My-Item").expanduser().is_dir():
             raise ValueError("仓库扫描目录不存在")
         if item["theme_mode"] not in ("auto", "manual") or item["manual_theme"] not in ("morning", "afternoon", "night"):
@@ -942,9 +952,19 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         self.event("KnowledgeReviewed", "knowledge_proposal", item["id"], task.get("project_id") if task else None, {"choice": choice, "title": item["title"]})
         return item
 
+    def _resumable(self, run: dict[str, Any]) -> bool:
+        runtime = RUNTIMES.get(run.get("runtime") or "codex")
+        return bool(runtime and runtime.remote and run.get("external_id"))
+
     def _recover_interrupted_runs(self) -> None:
         for run in self.all("agent_run"):
-            if run.get("status") == "Running":
+            executable = self._resumable(run) and RUNTIMES[run["runtime"]].command_path(self._settings())
+            if run.get("status") == "Running" and executable:
+                worker = threading.Thread(target=self._run_agent, args=(run["id"], "", run.get("before_snapshot", {}), executable),
+                                          kwargs={"external_id": run["external_id"]}, daemon=True)
+                self._workers[run["id"]] = worker
+                worker.start()
+            elif run.get("status") == "Running":
                 run["status"] = "Interrupted"
                 run["error"] = "服务重启，无法确认外部执行结果。请检查工作目录后重试。"
                 run["finished_at"] = stamp()
@@ -1028,8 +1048,10 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"] and r["category"] in ("Agent", "General")],
         }
         prompt += "\n以下是用户明确记录的项目约束与参考规则，请遵守；若与任务矛盾请说明阻塞：\n" + json.dumps(context, ensure_ascii=False)
+        previous = next((r for r in self.all("agent_run") if r["task_id"] == task["id"]), None)
+        rerun_id = previous["external_id"] if p.get("rerun") and runtime.remote and previous and previous.get("runtime") == runtime.id and previous.get("external_id") else ""
         before = self._workspace_snapshot(workspace)
-        run = self.put("agent_run", {"task_id": task["id"], "agent_id": runtime.label, "runtime": runtime.id, "external_id": "", "log_tail": [],
+        run = self.put("agent_run", {"task_id": task["id"], "agent_id": runtime.label, "runtime": runtime.id, "external_id": rerun_id, "log_tail": [],
                                      "status": "Running", "started_at": stamp(), "finished_at": None, "result": "", "error": "",
                                      "workspace_path": str(workspace), "before_snapshot": before})
         task["status"] = "Running"
@@ -1039,7 +1061,8 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         task["review_status"] = None
         self.put("task", task)
         self.event("AgentRunStarted", "agent_run", run["id"], task.get("project_id"), {"title": task["title"], "agent": runtime.label})
-        worker = threading.Thread(target=self._run_agent, args=(run["id"], prompt, before, executable), daemon=True)
+        worker = threading.Thread(target=self._run_agent, args=(run["id"], prompt, before, executable),
+                                  kwargs={"external_id": rerun_id, "rerun": bool(rerun_id)}, daemon=True)
         self._workers[run["id"]] = worker
         worker.start()
         return {k: v for k, v in run.items() if k != "before_snapshot"}
@@ -1093,7 +1116,8 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         run.pop("before_snapshot", None)
         self.put("agent_run", run)
 
-    def _run_agent(self, run_id: str, prompt: str, before: dict[str, tuple[int, int]], executable: str) -> None:
+    def _run_agent(self, run_id: str, prompt: str, before: dict[str, tuple[int, int]], executable: str,
+                   external_id: str = "", rerun: bool = False) -> None:
         with self.lock:
             run = self.get("agent_run", run_id)
         if not run or run["status"] != "Running" or self._stopping:
@@ -1110,12 +1134,26 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 if self._stopping or self.get("agent_run", run_id)["status"] != "Running":
                     stop_process(process)
 
-        outcome = execute(runtime, executable, prompt, Path(run["workspace_path"]), started, lambda text: self._agent_log(run_id, text))
+        def remember(issue: str) -> None:
+            with self.lock:
+                current = self.get("agent_run", run_id)
+                if current:
+                    current["external_id"] = issue
+                    self.put("agent_run", current)
+
+        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, lambda text: self._agent_log(run_id, text),
+                              self._settings(), external_id, rerun, remember)
         with self.lock:
             self._processes.pop(run_id, None)
             self._log_flushed.pop(run_id, None)
             log_tail = self._run_logs.pop(run_id, None)
             run = self.get("agent_run", run_id)
+            if outcome.detached:
+                self._workers.pop(run_id, None)
+                if run and log_tail is not None:
+                    run["log_tail"] = log_tail
+                    self.put("agent_run", run)
+                return
             if run:
                 self._record_artifacts(run, before)
                 run = self.get("agent_run", run_id)
@@ -1192,7 +1230,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             self.event("TaskCompleted", "task", task["id"], task.get("project_id"), {"title": task["title"]})
             return task
         if choice in ("revise", "rerun"):
-            return self.start_agent({"task_id": task["id"], "instruction": p.get("instruction") or ""})
+            return self.start_agent({"task_id": task["id"], "instruction": p.get("instruction") or "", "rerun": choice == "rerun"})
         raise ValueError("审核选择无效")
 
     def generate_brief(self, p: dict[str, Any]) -> dict[str, Any]:
@@ -1313,7 +1351,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
 
     @staticmethod
     def runtime_status(settings: dict[str, Any]) -> dict[str, Any]:
-        agents = [{"id": r.id, "label": r.label, "setting": r.setting, "binary": r.binary, "sandboxed": r.sandboxed, "available": bool(r.command_path(settings))} for r in RUNTIMES.values()]
+        agents = [{"id": r.id, "label": r.label, "setting": r.setting, "binary": r.binary, "sandboxed": r.sandboxed, "remote": r.remote, "available": bool(r.command_path(settings))} for r in RUNTIMES.values()]
         return {"codex_available": next(a["available"] for a in agents if a["id"] == "codex"), "agents": agents}
 
     def _existing(self, kind: str, p: dict[str, Any]) -> dict[str, Any]:
