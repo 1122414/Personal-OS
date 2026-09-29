@@ -329,9 +329,12 @@ class RealSandboxTests(unittest.TestCase):
         probe = Path.home() / ".pos-escape-probe"
         self.addCleanup(probe.unlink, missing_ok=True)
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory(dir=Path.home()) as outside:
-            script = f"echo in > inside.txt; echo out > '{outside}/escape.txt'; echo home > \"$HOME/.pos-escape-probe\""
+            scratch = Path(f"/tmp/pos-sandbox-probe-{os.getpid()}.txt")
+            self.addCleanup(scratch.unlink, missing_ok=True)
+            script = f"echo in > inside.txt; echo tmp > '{scratch}'; echo out > '{outside}/escape.txt'; echo home > \"$HOME/.pos-escape-probe\""
             outcome = execute(Shell(), "/bin/sh", script, Path(workspace), lambda p: None, lambda text: None)
             self.assertTrue((Path(workspace) / "inside.txt").exists())
+            self.assertTrue(scratch.exists())
             self.assertFalse((Path(outside) / "escape.txt").exists())
             self.assertFalse(probe.exists())
             self.assertFalse(outcome.succeeded)

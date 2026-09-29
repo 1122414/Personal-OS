@@ -71,6 +71,7 @@ def sandbox_profile(workspace: Path, state_paths: list[str]) -> str:
     home = str(Path.home().resolve())
     allowed = [f"(subpath {_sandbox_string(str(workspace.resolve()))})",
                f"(subpath {_sandbox_string(str(Path(tempfile.gettempdir()).resolve()))})",
+               f"(subpath {_sandbox_string(str(Path('/tmp').resolve()))})",
                '(regex #"^/dev/")']
     allowed += [f'(regex #"^{_regex_literal(home + "/" + prefix)}")' for prefix in state_paths]
     return f"(version 1)(allow default)(deny file-write*)(allow file-write* {' '.join(allowed)})"
