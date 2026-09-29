@@ -31,7 +31,12 @@ export const NAV = [
 
 export const STATUS = {
   Inbox: '待派出', Planned: '待派出', Running: '运行中',
-  Review: '等你回复', Done: '已完成', Blocked: '失败或取消',
+  Reply: '等你回复', Review: '待验收', Done: '已完成', Blocked: '失败或取消',
+}
+
+export function taskState(task, runs) {
+  if (task.status === 'Planned') return 'Inbox'
+  return task.status === 'Review' && runs.find(run => run.task_id === task.id)?.needs_reply ? 'Reply' : task.status
 }
 
 export function Button({ children, variant = 'secondary', className = '', ...rest }) {

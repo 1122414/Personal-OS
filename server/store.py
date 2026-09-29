@@ -50,7 +50,17 @@ DEFAULT_SETTINGS = {
 }
 RUN_LOG_LINES = 40
 RUN_LOG_LINE_LIMIT = 300
-FOLLOW_UP_TAIL = "请继续在同一工作目录内完成，最后列出这一轮的实际改动、验证结果和仍需人工审核的事项。"
+ASK_MARKER = "【需要你回复】"
+ASK_RULE = f"如果需要用户澄清或做选择才能继续，不要猜测，直接提问（可以列出选项），并在回复最后单独一行写{ASK_MARKER}。"
+FOLLOW_UP_TAIL = "请继续在同一工作目录内完成，最后列出这一轮的实际改动、验证结果和仍需人工审核的事项。" + ASK_RULE
+
+
+def strip_ask_marker(text: str) -> tuple[str, bool]:
+    """Drop a last line that is only the ask marker; agents may wrap it in Markdown."""
+    lines = (text or "").rstrip().splitlines()
+    if not lines or lines[-1].strip(" *_`>#-") != ASK_MARKER:
+        return text or "", False
+    return "\n".join(lines[:-1]).rstrip(), True
 
 
 
@@ -955,7 +965,7 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
         if len(message) > 4000:
             raise ValueError("消息过长")
         prompt = f"任务：{task['title']}\n\n描述与完成标准：\n{task.get('description') or task['title']}\n"
-        prompt += "\n请在指定工作目录内完成任务，最后清楚列出实际改动、验证结果和仍需人工审核的事项。"
+        prompt += "\n请在指定工作目录内完成任务，最后清楚列出实际改动、验证结果和仍需人工审核的事项。" + ASK_RULE
         context = {
             "project": {"name": project["name"], "description": project.get("description", ""), "stage": project.get("stage", "")},
             "active_decisions": [{"title": d["title"], "content": d["content"]} for d in self.all("decision") if d["status"] == "Active" and d.get("project_id") in (None, project["id"])],
@@ -1118,6 +1128,12 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                 run["external_id"] = outcome.external_id
             if run and outcome.outside_writes:
                 run["outside_writes"] = outcome.outside_writes
+            asked = False
+            if outcome.transcript:
+                texts = [e for e in outcome.transcript if e.get("type") == "text"]
+                if texts:
+                    texts[-1]["text"], asked = strip_ask_marker(texts[-1]["text"])
+            result, asked_in_result = strip_ask_marker(outcome.result)
             if run and outcome.transcript:
                 run["transcript"] = outcome.transcript
             if not run or run["status"] != "Running":
@@ -1126,7 +1142,8 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                 return
             task = self.get("task", run["task_id"])
             run["status"] = "Finished" if outcome.succeeded else "Failed"
-            run["result"] = outcome.result[:30000]
+            run["result"] = result[:30000]
+            run["needs_reply"] = outcome.succeeded and (asked or asked_in_result)
             run["error"] = outcome.error
             run["finished_at"] = stamp()
             self.put("agent_run", run)

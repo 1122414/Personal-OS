@@ -162,7 +162,7 @@
 @media(max-height:800px){.workspace-home .hero{height:60px}.workspace-home .hero h1{font-size:25px;margin:0}.workspace-home .hero-copy>p{display:none}}
 .page-toolbar .inline-actions{align-items:center;flex-wrap:nowrap}.view-toggle{flex:none}
 .board-split{grid-template-columns:minmax(0,1.7fr) minmax(290px,.8fr)}.board-panel{overflow-x:auto}
-.task-board{display:grid;grid-template-columns:repeat(5,minmax(108px,1fr));gap:6px;min-height:100%}
+.task-board{display:grid;grid-template-columns:repeat(6,minmax(96px,1fr));gap:6px;min-height:100%}
 .board-column{display:flex;flex-direction:column;gap:7px;min-width:0;background:var(--surface-soft);border-radius:10px;padding:8px}
 .board-column header{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:700;padding:2px 3px 4px}.board-column header small{color:var(--muted);font-weight:500}
 .board-card{display:flex;flex-direction:column;gap:5px;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:9px 10px;color:var(--ink);font-size:11px;cursor:pointer}
@@ -225,3 +225,4 @@
 .agent-composer{position:sticky;bottom:-22px;margin:12px -23px -22px;padding:10px 23px 12px;background:linear-gradient(var(--surface-strong),var(--surface-strong)),linear-gradient(var(--surface-strong),var(--surface-strong)),var(--surface-strong);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);box-shadow:0 -10px 24px rgba(0,0,0,.18);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
 .agent-composer textarea{width:100%;resize:vertical;min-height:44px;max-height:200px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--ink);font-size:13px;line-height:1.6;outline:0}.agent-composer textarea:focus{border-color:var(--accent)}
 .chat-actions{display:flex;justify-content:flex-end;gap:8px}
+.status-Reply{color:#b0304a;background:rgba(214,84,110,.16)}.theme-night .status-Reply,.theme-afternoon .status-Reply{color:#ff9aac}.chat-tag.ask{color:#b0304a;border-color:rgba(214,84,110,.45)}.theme-night .chat-tag.ask,.theme-afternoon .chat-tag.ask{color:#ff9aac}

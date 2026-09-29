@@ -1,17 +1,19 @@
 import React, { useState } from 'react'
-import { Modal, Panel } from '../ui.jsx'
+import { Modal, Panel, taskState } from '../ui.jsx'
 import { Capture } from '../workspace.jsx'
 import { RecallCard } from '../PersonalState.jsx'
 import { HomeItems, LastWork, RepoOnboarding } from '../HomePanels.jsx'
 import TodayPlan from './Today.jsx'
 
 function Attention({ data, navigate }) {
-  const waiting = data.tasks.filter(task => task.status === 'Review')
+  const replying = data.tasks.filter(task => taskState(task, data.agent_runs) === 'Reply')
+  const waiting = data.tasks.filter(task => taskState(task, data.agent_runs) === 'Review')
   const blocked = data.tasks.filter(task => task.status === 'Blocked' && !task.archived_at)
   const running = data.agent_runs.filter(run => run.status === 'Running')
-  if (!waiting.length && !blocked.length && !running.length) return null
+  if (!replying.length && !waiting.length && !blocked.length && !running.length) return null
   return <div className="attention-bar" role="status">
-    {waiting.length > 0 && <button onClick={() => navigate('tasks', waiting[0].id)}>{waiting.length} 个 Agent 等你回复 →</button>}
+    {replying.length > 0 && <button onClick={() => navigate('tasks', replying[0].id)}>{replying.length} 个 Agent 等你回复 →</button>}
+    {waiting.length > 0 && <button onClick={() => navigate('tasks', waiting[0].id)}>{waiting.length} 个 Agent 任务待验收 →</button>}
     {blocked.length > 0 && <button onClick={() => navigate('tasks', blocked[0].id)}>{blocked.length} 个 Agent 任务失败或取消 →</button>}
     {running.length > 0 && <span>{running.length} 个 Agent 正在执行</span>}
   </div>

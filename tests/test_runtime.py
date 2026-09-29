@@ -149,6 +149,31 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual((run["status"], run["resumed"], run["resume_failed"], run["external_id"]), ("Finished", False, True, "s-2"))
         self.assertIn("原会话无法续接，已开新会话并附上之前的对话", run["log_tail"])
 
+    def test_a_reply_ending_with_the_ask_marker_waits_for_the_user(self):
+        prompts = []
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                prompts.append(prompt)
+                return lines({"session": "s-1", "say": "用 Python 还是 Node？\n\n**【需要你回复】**"}, {"result": "用 Python 还是 Node？\n【需要你回复】"}), "", 0
+
+        run = self.wait_run(self.start(Process)["id"])
+        self.assertIn("【需要你回复】", prompts[0])
+        self.assertTrue(run["needs_reply"])
+        self.assertEqual(run["transcript"][-1]["text"], "用 Python 还是 Node？")
+        self.assertEqual(run["result"], "用 Python 还是 Node？")
+        self.assertEqual(self.store.get("task", self.task["id"])["status"], "Review")
+
+        class Answered(FakeAgentProcess):
+            def behave(self, prompt):
+                prompts.append(prompt)
+                return lines({"session": "s-1", "say": "已用 Python 写好，提到【需要你回复】也不算"}), "", 0
+
+        self.patch_runtime(Answered)
+        run = self.wait_run(self.store.action("send_agent_message", {"task_id": self.task["id"], "text": "Python"})["id"])
+        self.assertIn("【需要你回复】", prompts[1])
+        self.assertFalse(run["needs_reply"])
+
     def test_messages_need_a_finished_turn_and_failed_turns_can_still_be_accepted(self):
         with self.assertRaisesRegex(ValueError, "Agent 回复后"):
             self.store.action("send_agent_message", {"task_id": self.task["id"], "text": "你好"})

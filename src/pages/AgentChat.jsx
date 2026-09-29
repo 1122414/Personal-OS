@@ -35,7 +35,7 @@ function AgentTurn({ run }) {
   const running = run.status === 'Running'
   const entries = run.transcript || []
   return <article className="chat-turn agent">
-    <div className="chat-meta"><strong>{run.agent_id}</strong><span className={`run-status run-${run.status}`}>{RUN_STATUS[run.status] || run.status}</span>{run.resumed && <span className="chat-tag">接着原会话</span>}{run.resume_failed && <span className="chat-tag">原会话无法续接，已开新会话</span>}<span className="chat-time">{timeLabel(run.started_at)} · {runDuration(run)}</span></div>
+    <div className="chat-meta"><strong>{run.agent_id}</strong><span className={`run-status run-${run.status}`}>{RUN_STATUS[run.status] || run.status}</span>{run.resumed && <span className="chat-tag">接着原会话</span>}{run.resume_failed && <span className="chat-tag">原会话无法续接，已开新会话</span>}{run.needs_reply && <span className="chat-tag ask">在等你回复</span>}<span className="chat-time">{timeLabel(run.started_at)} · {runDuration(run)}</span></div>
     {running ? <p className="muted">正在执行，回复后可以接着说。</p> : entries.length ? <Transcript entries={entries} /> : run.result ? <Markdown text={run.result} /> : !run.error && <p className="muted">没有回复。</p>}
     {!running && run.error && <p className="notice chat-error">{run.error}</p>}
     {run.outside_writes?.length > 0 && <p className="notice">尝试写入工作目录以外：{run.outside_writes.join('、')}</p>}
@@ -82,7 +82,7 @@ export function Composer({ task, runs, run }) {
   }
   return <div className="agent-composer">
     <textarea aria-label="接着说" rows={2} maxLength={4000} value={text} disabled={running || sending}
-      placeholder={running ? 'Agent 正在执行，回复后再接着说…' : '接着说，Enter 发送，Shift+Enter 换行'}
+      placeholder={running ? 'Agent 正在执行，回复后再接着说…' : runs[0]?.needs_reply ? '回答 Agent 的问题，Enter 发送，Shift+Enter 换行' : '接着说，Enter 发送，Shift+Enter 换行'}
       onChange={event => setText(event.target.value)}
       onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send() } }} />
     <div className="chat-actions">{running
