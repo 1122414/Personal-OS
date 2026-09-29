@@ -22,7 +22,7 @@ export function LastWork({ data, run }) {
   if (!work) return <Panel title="上次工作" action={tools} className="last-work">
     <Empty title={data.projects.length ? '还没有读到工作痕迹' : '登记项目后，这里会出现上次做了什么'} detail="来自已登记项目的 git 提交，以及 Cursor、Codex、WorkBuddy 的会话。" />
   </Panel>
-  return <Panel title="上次工作" action={tools} className="last-work">
+  return <Panel title="上次工作" action={tools} className="last-work"><div className="trace-list">
     {work.groups.map((group, index) => <details key={group.project_id || 'none'} open={index < 2} className="trace-group">
       <summary><strong>{group.name}</strong><small>{[group.commits.length && `${group.commits.length} 次提交`, group.sessions.length && `${group.sessions.length} 段会话`, group.tasks.length && `完成 ${group.tasks.length} 项任务`].filter(Boolean).join(' · ')}</small></summary>
       <ul>
@@ -33,7 +33,7 @@ export function LastWork({ data, run }) {
     </details>)}
     {work.unassigned_sessions.length > 0 && <details className="trace-group"><summary><strong>其他会话</strong><small>{work.unassigned_sessions.length} 段 · 未归到已登记项目</small></summary><ul>{work.unassigned_sessions.map(item => <SessionRow key={item.id} item={item} />)}</ul></details>}
     {sync.error_count > 0 && <p className="muted">最近一次同步有 {sync.error_count} 个来源未读完：{sync.errors?.[0]?.error}</p>}
-  </Panel>
+  </div></Panel>
 }
 
 export function RepoOnboarding({ run }) {

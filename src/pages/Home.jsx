@@ -27,17 +27,18 @@ function DailyReportPanel({ data, navigate }) {
 export default function Home({ data, run, open, navigate, refresh }) {
   const review = data.weekly_review?.items || []
   return <div className="page home-page"><div className="home-scroll">
-    <Panel title="随手记" className="home-capture" action={<small>先留下，不急着分类</small>}><Capture compact run={run} /></Panel>
+    <Panel className="home-capture"><Capture compact run={run} /></Panel>
     <Attention data={data} navigate={navigate} />
     {data.projects.length === 0 && <RepoOnboarding run={run} />}
-    <div className="home-columns"><div className="home-primary">
+    <div className="home-grid">
       <LastWork data={data} run={run} />
-      <TodayPlan data={data} run={run} open={open} navigate={navigate} />
-    </div><div className="home-secondary">
       <HomeItems data={data} run={run} refresh={refresh} navigate={navigate} />
+      <TodayPlan data={data} run={run} open={open} navigate={navigate} />
       <DailyReportPanel data={data} navigate={navigate} />
+    </div>
+    <div className="home-extras">
       {review.length > 0 && <Panel title="本周，想起这些点子" action={<small>{review.length} 条</small>}>{review.map(item => <RecallCard key={item.record_id} item={item} record={item.record} topicTitle={item.topic_title} run={run} />)}</Panel>}
       <Panel className="home-states"><details><summary>近期状态</summary><PersonalState data={data} run={run} /></details></Panel>
-    </div></div>
+    </div>
   </div></div>
 }
