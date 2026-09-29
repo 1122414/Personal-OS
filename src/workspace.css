@@ -3,7 +3,7 @@
 .workspace-topic .hero{display:none}
 .workspace-topic .content{padding-top:12px}
 .home-page{gap:12px}
-.home-scroll{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.home-scroll{flex:1;min-height:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:auto}
 .home-capture{flex:none;margin-bottom:14px;padding:12px 14px 12px 20px}
 .home-capture .capture{background:transparent;border:0;padding:0;display:flex;flex-wrap:wrap;align-items:center;gap:12px}
 .home-capture .capture textarea{flex:1;min-width:220px;min-height:40px;height:40px;padding:8px 0;font-size:15px;resize:none;overflow:hidden}
@@ -11,18 +11,26 @@
 .home-capture .capture-actions{margin-top:0}
 .home-capture .capture-attachments,.home-capture .inline-error{flex-basis:100%;order:3}
 .home-grid .panel-heading small{font-size:11px;color:var(--muted)}
-.home-grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.home-grid{flex:1;min-height:454px;display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);grid-template-rows:minmax(220px,1fr) minmax(220px,1fr);grid-template-areas:"today side" "last side";gap:14px}
+.home-grid>.today-plan{grid-area:today}
+.home-grid>.last-work,.home-grid>.repo-onboarding{grid-area:last}
 .home-grid .panel{padding:18px 22px;border-radius:13px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .home-grid .panel-heading{flex:none;margin-bottom:10px}
 .home-grid .panel-body,.home-grid .panel>.priority-list,.home-grid .panel>.work-list,.home-grid .panel>.empty{flex:1 1 0;min-height:0;overflow:auto}
 .home-grid .panel>.brief-actions{flex:none;margin-top:12px}
 .home-grid .panel>.empty{padding:10px 0}
-.home-stack{display:flex;flex-direction:column;gap:14px;min-height:0}
-.home-stack>.panel:first-child{flex:1}
-.home-grid .home-extras{flex:none;max-height:60%;overflow:auto;padding:10px 22px;gap:4px}
-.home-extras details{padding:4px 0}
-.home-extras summary{cursor:pointer;font-weight:600;font-size:13px}
-.home-extras summary small{font-weight:400;color:var(--muted);margin-left:6px}
+.home-side{grid-area:side;display:flex;flex-direction:column;gap:14px;min-height:0}
+.home-side>.home-items{flex:1}
+.home-grid .home-strip{flex:none;padding:12px 22px;gap:8px}
+.strip-row{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:13px}
+.strip-row .overline{flex:none}
+.strip-title{flex:1;min-width:0;text-align:left;background:none;border:0;padding:0;color:var(--ink);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.strip-title:hover{color:var(--accent)}
+.strip-row .muted{flex:1}
+.strip-row .text-link{flex:none}
+.hero-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px 16px}
+.state-chip{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.14);color:white;border-radius:999px;padding:5px 14px;font-size:12px;cursor:pointer;text-shadow:none;backdrop-filter:blur(6px)}
+.state-chip:hover{background:rgba(255,255,255,.24)}
 .last-work{display:flex;flex-direction:column;min-height:0}
 .trace-list{flex:1 1 0;min-height:0;overflow:auto;margin-right:-8px;padding-right:8px}
 .home-page .panel-heading h2{font-size:21px}
@@ -148,9 +156,10 @@
 @media(max-width:900px),(max-height:700px){.summary-layout{min-height:450px}.summary-reader,.summary-sidebar{overflow:visible}}
 @media(max-width:700px){.summary-layout{display:block}.summary-sidebar{margin-top:12px}.candidate-compare{grid-template-columns:1fr}.summary-reader{padding:15px}}
 @media(max-width:1100px){.home-grid{grid-template-columns:minmax(0,1.4fr) minmax(245px,1fr)}.home-grid .panel{padding:16px 17px}.chat-related{width:230px}}
-@media(max-width:900px),(max-height:700px){.home-page{display:flex;min-height:0;overflow:visible;flex:1}.home-scroll{display:block;overflow:visible}.home-grid{grid-template-rows:none}.home-grid .panel{overflow:visible}.trace-list,.home-grid .panel-body{max-height:320px;flex:none}.home-page>.today-page{overflow:visible}.conversation-layout{overflow:visible;flex:none;display:block}.chat-related{width:auto;border-left:0;border-top:1px solid var(--border);padding:20px 0;overflow:visible}.conversation-layout .messages{max-height:60vh;min-height:180px;overflow:auto}.workspace-topic .content{padding-top:5px}}
-@media(max-width:650px){.home-grid{grid-template-columns:1fr}.home-capture .panel-heading small{display:none}.topic-heading h1{font-size:23px}.workspace-home .hero{height:110px}.continue-topic .workspace-actions{justify-content:flex-start}}
+@media(max-width:900px),(max-height:700px){.home-page{display:flex;min-height:0;overflow:visible;flex:1}.home-scroll{display:block;overflow:visible}.home-grid{grid-template-rows:none}.home-grid .panel{overflow:visible}.trace-list,.home-grid .panel-body,.home-grid .panel>.priority-list,.home-grid .panel>.work-list{max-height:320px;flex:none}.home-page>.today-page{overflow:visible}.conversation-layout{overflow:visible;flex:none;display:block}.chat-related{width:auto;border-left:0;border-top:1px solid var(--border);padding:20px 0;overflow:visible}.conversation-layout .messages{max-height:60vh;min-height:180px;overflow:auto}.workspace-topic .content{padding-top:5px}}
+@media(max-width:650px){.home-grid{grid-template-columns:1fr;grid-template-areas:"today" "side" "last"}.home-capture .panel-heading small{display:none}.topic-heading h1{font-size:23px}.workspace-home .hero{height:110px}.continue-topic .workspace-actions{justify-content:flex-start}}
 @media(max-height:860px){.workspace-home .hero{height:80px}.workspace-home .hero h1{font-size:30px;margin-bottom:3px}.workspace-home .hero p{font-size:12px}}
+@media(max-height:800px){.workspace-home .hero{height:60px}.workspace-home .hero h1{font-size:25px;margin:0}.workspace-home .hero-copy>p{display:none}}
 .page-toolbar .inline-actions{align-items:center;flex-wrap:nowrap}.view-toggle{flex:none}
 .board-split{grid-template-columns:minmax(0,1.7fr) minmax(290px,.8fr)}.board-panel{overflow-x:auto}
 .task-board{display:grid;grid-template-columns:repeat(6,minmax(108px,1fr));gap:6px;min-height:100%}

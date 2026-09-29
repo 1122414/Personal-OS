@@ -1,7 +1,7 @@
-import React from 'react'
-import { Button, Empty, Panel } from '../ui.jsx'
+import React, { useState } from 'react'
+import { Modal, Panel } from '../ui.jsx'
 import { Capture } from '../workspace.jsx'
-import PersonalState, { RecallCard } from '../PersonalState.jsx'
+import { RecallCard } from '../PersonalState.jsx'
 import { HomeItems, LastWork, RepoOnboarding } from '../HomePanels.jsx'
 import TodayPlan from './Today.jsx'
 
@@ -17,28 +17,28 @@ function Attention({ data, navigate }) {
   </div>
 }
 
-function DailyReportPanel({ data, navigate }) {
-  const reports = data.daily_reports?.reports.filter(item => item.date === data.daily_reports.latest_date).slice(0, 4) || []
-  return <Panel title="AI 日报" action={<button className="text-link" onClick={() => navigate('intelligence')}>阅读全文 →</button>}>
-    {reports.length ? <div className="panel-body"><p className="muted">{data.daily_reports.latest_date === data.today ? '今日报告' : `今天尚未发布 · 最新 ${data.daily_reports.latest_date}`}</p>{reports.map(item => <button className="mini-row" key={item.id} onClick={() => navigate('intelligence', item.id)}><span className="small-symbol">▤</span><span>{item.title}</span></button>)}</div> : <Empty title="尚未发现 AI 日报" detail="读取 Obsidian 日报目录中的成品报告。" action={<Button onClick={() => navigate('settings')}>检查来源</Button>} />}
+function HomeStrip({ data, run, navigate }) {
+  const [recall, setRecall] = useState(false)
+  const latest = data.daily_reports?.reports.find(item => item.date === data.daily_reports.latest_date)
+  const review = data.weekly_review?.items || []
+  return <Panel className="home-strip">
+    {latest ? <div className="strip-row"><span className="overline">AI 日报 · {latest.date === data.today ? '今天' : latest.date}</span><button className="strip-title" onClick={() => navigate('intelligence', latest.id)}>{latest.title}</button><button className="text-link" onClick={() => navigate('intelligence')}>阅读全文 →</button></div>
+      : <div className="strip-row"><span className="overline">AI 日报</span><span className="muted">尚未发现成品报告</span><button className="text-link" onClick={() => navigate('settings')}>检查来源 →</button></div>}
+    {review.length > 0 && <div className="strip-row"><span className="overline">回想</span><button className="strip-title" onClick={() => setRecall(true)}>本周想起 {review.length} 条点子 →</button></div>}
+    {recall && <Modal title="本周，想起这些点子" onClose={() => setRecall(false)}>{review.map(item => <RecallCard key={item.record_id} item={item} record={item.record} topicTitle={item.topic_title} run={run} />)}</Modal>}
   </Panel>
 }
 
 export default function Home({ data, run, open, navigate, refresh }) {
-  const review = data.weekly_review?.items || []
   return <div className="page home-page"><div className="home-scroll">
     <Panel className="home-capture"><Capture compact run={run} /></Panel>
     <Attention data={data} navigate={navigate} />
     <div className="home-grid">
-      {data.projects.length === 0 ? <RepoOnboarding run={run} /> : <LastWork data={data} run={run} />}
-      <HomeItems data={data} run={run} refresh={refresh} navigate={navigate} />
       <TodayPlan data={data} run={run} open={open} navigate={navigate} />
-      <div className="home-stack">
-        <DailyReportPanel data={data} navigate={navigate} />
-        <Panel className="home-extras">
-          {review.length > 0 && <details><summary>本周，想起这些点子 <small>{review.length} 条</small></summary>{review.map(item => <RecallCard key={item.record_id} item={item} record={item.record} topicTitle={item.topic_title} run={run} />)}</details>}
-          <details><summary>近期状态</summary><PersonalState data={data} run={run} /></details>
-        </Panel>
+      {data.projects.length === 0 ? <RepoOnboarding run={run} /> : <LastWork data={data} run={run} />}
+      <div className="home-side">
+        <HomeItems data={data} run={run} refresh={refresh} navigate={navigate} />
+        <HomeStrip data={data} run={run} navigate={navigate} />
       </div>
     </div>
   </div></div>

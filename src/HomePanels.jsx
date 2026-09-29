@@ -88,7 +88,7 @@ function HomeField({ item, field, label, run, refresh }) {
 
 export function HomeItems({ data, run, refresh, navigate }) {
   const home = data.home_items || { configured: false, items: [], errors: [] }
-  if (!home.configured) return <Panel title="长线事项"><Empty title="读取 Obsidian 首页的事项" detail={home.errors[0] || '在设置中配置 Obsidian vault 后显示。'} action={<Button onClick={() => navigate('settings')}>打开设置</Button>} /></Panel>
+  if (!home.configured) return <Panel title="长线事项" className="home-items"><Empty title="读取 Obsidian 首页的事项" detail={home.errors[0] || '在设置中配置 Obsidian vault 后显示。'} action={<Button onClick={() => navigate('settings')}>打开设置</Button>} /></Panel>
   const current = home.items.filter(item => item.home_status !== 'done')
   const finished = home.items.length - current.length
   return <Panel title="长线事项" action={<small>{finished ? `已完成 ${finished} 项 · ` : ''}以 Obsidian 为准</small>} className="home-items">

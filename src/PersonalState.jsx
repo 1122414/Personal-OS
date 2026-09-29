@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Button, Field, Modal, dateLabel } from './ui.jsx'
 
 const PACE = { normal: '照常推进', light: '小段推进', rest: '以休息为主' }
@@ -45,6 +46,17 @@ export default function PersonalState({ data, run }) {
     {past.length > 0 && <details className="state-history"><summary>过去的状态 · {past.length}</summary>{past.map(state => <article key={state.id}><p>{state.text}</p><small>{state.ended_at ? '已结束' : '已过期'} · 不再影响建议</small><a href={`#records/${state.record_id}`}>查看原话 ↗</a></article>)}</details>}
     {(creating || editing) && <StateForm state={editing} run={run} close={() => { setEditing(null); setCreating(false) }} />}
   </div>
+}
+
+export function StateChip({ data, run }) {
+  const [open, setOpen] = useState(false)
+  const states = data.personal_states || []
+  const current = states.find(state => state.active) || states.find(state => !state.confirmed_at && !state.ended_at && !state.expired)
+  const label = current ? `${current.confirmed_at ? '' : '待确认 · '}${current.text} · 至 ${dateLabel(current.expires_at)}` : '＋ 记下近期状态'
+  return <>
+    <button className="state-chip" title={current ? `近期状态：${current.text}` : '记下近期状态'} onClick={() => setOpen(true)}>{label}</button>
+    {open && createPortal(<Modal title="近期状态" onClose={() => setOpen(false)}><PersonalState data={data} run={run} /></Modal>, document.querySelector('.app-shell') || document.body)}
+  </>
 }
 
 export function RecallCard({ item, record, run, onChange, topicId, topicTitle }) {

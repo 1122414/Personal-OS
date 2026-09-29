@@ -10,6 +10,7 @@ import History from './pages/History.jsx'
 import Settings from './pages/Settings.jsx'
 import Records from './pages/Records.jsx'
 import Learning from './pages/Learning.jsx'
+import { StateChip } from './PersonalState.jsx'
 
 function themeByTime() {
   const hour = new Date().getHours()
@@ -163,7 +164,7 @@ export default function App() {
   return <div className={`app-shell theme-${theme} ${page === 'today' ? 'workspace-home' : ''} ${page === 'learning' && focus ? 'workspace-topic' : ''}`} style={{ '--surface-alpha': (100 - transparency) / 100 }}>
     <aside className="sidebar"><div className="brand"><div className="brand-mark">♆</div><div><strong>Personal OS</strong><small>ABYSS CALLS · BUT ALSO HEALS</small></div></div><nav aria-label="主导航">{NAV.map(([key, label, english]) => <button key={key} aria-label={label} className={`nav-item ${page === key ? 'active' : ''} ${key === 'settings' ? 'settings-nav' : ''}`} onClick={() => navigate(key)}><span className="nav-icon"><Icon name={key} /></span><span>{label}<small>{english}</small></span></button>)}</nav><div className="sidebar-quote"><span>✧</span><p>在混沌中，仍然前行。</p><small>PERSONAL OS · A MORE FOCUSED YOU</small></div></aside>
     <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索记录、主题、任务…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
-      <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1><p>{page === 'today' ? '先记下来，再继续一件重要的事。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
+      <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><div className="hero-line"><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1>{page === 'today' && data && <StateChip data={data} run={run} />}</div><p>{page === 'today' ? '先记下来，再继续一件重要的事。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
       <main className="content" ref={content}>{loading ? <div className="loading">正在读取工作空间…</div> : !data ? <div className="loading">无法连接本地服务。请启动 Python API。</div> : <>
         {page === 'today' && <Home data={data} run={run} open={open} navigate={navigate} refresh={refresh} />}
         {page === 'records' && <Records data={data} run={run} focus={focus} navigate={navigate} />}
