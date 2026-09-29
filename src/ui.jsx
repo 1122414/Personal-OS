@@ -73,3 +73,12 @@ export function timeLabel(iso) {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '' : new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(date)
 }
+
+export function runDuration(run, now = Date.now()) {
+  if (!run?.started_at) return ''
+  const end = run.finished_at ? new Date(run.finished_at).getTime() : now
+  const seconds = Math.max(0, Math.round((end - new Date(run.started_at).getTime()) / 1000))
+  if (seconds < 60) return `${seconds} 秒`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分`
+}

@@ -1313,7 +1313,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
 
     @staticmethod
     def runtime_status(settings: dict[str, Any]) -> dict[str, Any]:
-        agents = [{"id": r.id, "label": r.label, "setting": r.setting, "binary": r.binary, "available": bool(r.command_path(settings))} for r in RUNTIMES.values()]
+        agents = [{"id": r.id, "label": r.label, "setting": r.setting, "binary": r.binary, "sandboxed": r.sandboxed, "available": bool(r.command_path(settings))} for r in RUNTIMES.values()]
         return {"codex_available": next(a["available"] for a in agents if a["id"] == "codex"), "agents": agents}
 
     def _existing(self, kind: str, p: dict[str, Any]) -> dict[str, Any]:
