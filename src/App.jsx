@@ -48,7 +48,7 @@ function FormModal({ modal, data, run, close }) {
     decision: '记录决策', 'decision-edit': '编辑决策', pulse: '编辑项目脉搏',
     'log-edit': '修改日报', channel: '新建频道', 'channel-edit': '编辑频道', intelligence: '添加情报',
     rule: '新建规则', 'rule-edit': '编辑规则', knowledge: '提出知识沉淀',
-    'knowledge-edit': '修改并写入 Obsidian', 'agent-revision': '要求 Agent 继续修改',
+    'knowledge-edit': '修改并写入 Obsidian',
   }
 
   const agentProjects = data.projects.filter(project => project.workspace_path && project.status !== 'Completed')
@@ -85,8 +85,6 @@ function FormModal({ modal, data, run, close }) {
       operation = 'propose_knowledge'; payload.task_id = item.id
     } else if (kind === 'knowledge-edit') {
       operation = 'approve_knowledge'; payload = { ...values, id: item.id, choice: 'write' }
-    } else if (kind === 'agent-revision') {
-      operation = 'review_agent'; payload = { task_id: item.id, choice: 'revise', instruction: values.instruction }
     }
     const result = await run(operation, payload)
     if (result && dispatch) await run('start_agent', { task_id: result.id, runtime: result.runtime })
@@ -116,7 +114,6 @@ function FormModal({ modal, data, run, close }) {
     {(kind === 'rule' || kind === 'rule-edit') && <><Field label="规则内容"><textarea name="text" rows={3} defaultValue={item.text || ''} required autoFocus /></Field>{!editing && <Field label="类别"><select name="category"><option value="Daily Log">Daily Log</option><option value="Agent">Agent</option><option value="Intelligence">Intelligence</option><option value="General">General</option></select></Field>}{editing && <Button type="button" variant="danger" onClick={async () => { if (window.confirm('删除这条规则？')) { const result = await run('delete_rule', { id: item.id }); if (result) close() } }}>删除规则</Button>}</>}
     {kind === 'knowledge' && <><Field label="知识标题"><input name="title" defaultValue={item.title || ''} required autoFocus /></Field><Field label="拟保存内容"><textarea name="content" rows={8} defaultValue={item.result || item.description || ''} required /></Field></>}
     {kind === 'knowledge-edit' && <><Field label="知识标题"><input name="title" defaultValue={item.title} required autoFocus /></Field><Field label="写入内容"><textarea name="content" rows={10} defaultValue={item.content} required /></Field></>}
-    {kind === 'agent-revision' && <Field label="修改要求"><textarea name="instruction" rows={6} required autoFocus placeholder="说明需要修改的具体内容" /></Field>}
     {kind === 'task' ? <div className="modal-actions"><Button type="button" onClick={close}>取消</Button><Button type="submit" value="create" disabled={!agentProjects.length}>创建</Button><Button type="submit" value="dispatch" variant="primary" disabled={!agentProjects.length}>创建并派出</Button></div>
       : <div className="modal-actions"><Button type="button" onClick={close}>取消</Button><Button type="submit" variant="primary">{kind === 'knowledge-edit' ? '确认写入' : editing ? '保存修改' : '确认'}</Button></div>}
   </form></Modal>
@@ -191,7 +188,7 @@ export default function App() {
         {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}
         {page === 'projects' && <Projects data={data} run={run} open={open} focus={focus} navigate={navigate} />}
         {page === 'intelligence' && <Intelligence data={data} run={run} open={open} focus={focus} refresh={refresh} navigate={navigate} />}
-        {page === 'review' && <Review data={data} run={run} open={open} focus={focus} />}
+        {page === 'review' && <Review data={data} run={run} open={open} focus={focus} navigate={navigate} />}
         {page === 'history' && <History data={data} run={run} open={open} />}
         {page === 'settings' && <Settings data={data} run={run} open={open} theme={theme} previewTransparency={setPreviewTransparency} />}
       </>}</main>

@@ -31,7 +31,7 @@ export const NAV = [
 
 export const STATUS = {
   Inbox: '待派出', Planned: '待派出', Running: '运行中',
-  Review: '待审核', Done: '已完成', Blocked: '失败或取消',
+  Review: '等你回复', Done: '已完成', Blocked: '失败或取消',
 }
 
 export function Button({ children, variant = 'secondary', className = '', ...rest }) {

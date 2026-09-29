@@ -206,3 +206,22 @@
 .text-link:disabled{opacity:.45;cursor:not-allowed;text-decoration:none}
 .home-next-action{margin:2px 0 0 72px;font-size:11px}.home-next-action .text-link{font-size:11px;padding:2px 0}
 .home-next-action.done{color:var(--accent)}
+.chat{display:flex;flex-direction:column;gap:10px;margin:14px 0 6px}
+.chat-turn{padding:11px 13px;border-radius:10px;border:1px solid var(--border);background:var(--surface-soft);font-size:13px;min-width:0}
+.chat-turn.user{margin-left:14%;background:var(--accent-soft)}
+.chat-turn>p{margin:6px 0 0;line-height:1.7}
+.chat-turn .markdown-report{font-size:13px;line-height:1.7;margin-top:6px}
+.chat-turn .markdown-report h2,.chat-turn .markdown-report h3,.chat-turn .markdown-report h4{margin:12px 0 6px;font-size:14px}
+.chat-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.chat-meta strong{color:var(--ink);font-size:12px}
+.chat-time{margin-left:auto}
+.chat-tag{padding:1px 6px;border-radius:5px;border:1px solid var(--border)}
+.chat-steps{margin:6px 0;font-size:12px}.chat-steps summary{cursor:pointer;color:var(--muted)}
+.chat-steps ul{margin:6px 0 0;padding-left:18px;font:11px/1.6 Menlo,monospace;color:var(--muted);overflow-wrap:anywhere}
+.chat-turn details{margin-top:8px}.chat-turn details>summary{cursor:pointer;color:var(--muted);font-size:12px}
+.chat-error{margin:8px 0 0;max-height:120px;overflow:auto;white-space:pre-wrap;font-size:12px}
+.chat-note{margin:0;color:var(--muted);font-size:11px}
+.chat-changes>summary,.detail-section>summary{cursor:pointer;font-weight:600}
+.agent-composer{position:sticky;bottom:-22px;margin:12px -23px -22px;padding:10px 23px 12px;background:linear-gradient(var(--surface-strong),var(--surface-strong)),linear-gradient(var(--surface-strong),var(--surface-strong)),var(--surface-strong);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);box-shadow:0 -10px 24px rgba(0,0,0,.18);border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+.agent-composer textarea{width:100%;resize:vertical;min-height:44px;max-height:200px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--ink);font-size:13px;line-height:1.6;outline:0}.agent-composer textarea:focus{border-color:var(--accent)}
+.chat-actions{display:flex;justify-content:flex-end;gap:8px}

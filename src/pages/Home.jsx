@@ -11,7 +11,7 @@ function Attention({ data, navigate }) {
   const running = data.agent_runs.filter(run => run.status === 'Running')
   if (!waiting.length && !blocked.length && !running.length) return null
   return <div className="attention-bar" role="status">
-    {waiting.length > 0 && <button onClick={() => navigate('review', waiting[0].id)}>{waiting.length} 个结果等待审核 →</button>}
+    {waiting.length > 0 && <button onClick={() => navigate('tasks', waiting[0].id)}>{waiting.length} 个 Agent 等你回复 →</button>}
     {blocked.length > 0 && <button onClick={() => navigate('tasks', blocked[0].id)}>{blocked.length} 个 Agent 任务失败或取消 →</button>}
     {running.length > 0 && <span>{running.length} 个 Agent 正在执行</span>}
   </div>
