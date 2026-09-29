@@ -21,7 +21,7 @@ export const NAV = [
   ['today', '首页', 'Today'],
   ['records', '记录', 'Records'],
   ['todos', '待办', 'To-dos'],
-  ['tasks', '任务', 'Tasks'],
+  ['tasks', 'Agent 任务', 'Agents'],
   ['projects', '项目', 'Projects'],
   ['intelligence', 'AI 日报', 'Reports'],
   ['review', '审核', 'Review'],
@@ -30,11 +30,9 @@ export const NAV = [
 ]
 
 export const STATUS = {
-  Inbox: '收件箱', Planned: '已计划', Running: '进行中',
-  Review: '待审核', Done: '已完成', Blocked: '已阻塞',
+  Inbox: '待派出', Planned: '待派出', Running: '运行中',
+  Review: '待审核', Done: '已完成', Blocked: '失败或取消',
 }
-
-export const PRIORITY = { High: '高', Medium: '中', Low: '低' }
 
 export function Button({ children, variant = 'secondary', className = '', ...rest }) {
   return <button className={`button ${variant} ${className}`} {...rest}>{children}</button>

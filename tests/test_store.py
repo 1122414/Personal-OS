@@ -36,16 +36,36 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(self.store.get("todo", todo["id"])["done_at"])
         self.assertTrue(self.store.get("daily_log", log["id"])["confirmed_at"])
 
-    def test_agent_task_cannot_be_marked_done_directly(self):
-        task = self.store.action("create_task", {"title": "交给 Agent"})
-        self.store.action("update_task", {"id": task["id"], "executor_type": "agent"})
-        with self.assertRaisesRegex(ValueError, "必须经过审核"):
+    def agent_task(self, title="调研"):
+        workspace = Path(self.temp.name) / "repo"
+        workspace.mkdir(exist_ok=True)
+        project = self.store.action("create_project", {"name": title, "workspace_path": str(workspace)})
+        return self.store.action("create_task", {"title": title, "project_id": project["id"], "runtime": "codex"})
+
+    def test_agent_task_requires_project_with_directory_and_channel(self):
+        workspace = Path(self.temp.name) / "repo"
+        workspace.mkdir()
+        bare = self.store.action("create_project", {"name": "没目录"})
+        gone = self.store.action("create_project", {"name": "目录已删", "workspace_path": str(Path(self.temp.name) / "missing")})
+        ready = self.store.action("create_project", {"name": "可用", "workspace_path": str(workspace)})
+        with self.assertRaisesRegex(ValueError, "请选择 Agent 工作的项目"):
+            self.store.action("create_task", {"title": "交给 Agent", "runtime": "codex"})
+        for project in (bare, gone):
+            with self.assertRaisesRegex(ValueError, "没有有效的本地工作目录"):
+                self.store.action("create_task", {"title": "交给 Agent", "project_id": project["id"], "runtime": "codex"})
+        with self.assertRaisesRegex(ValueError, "请选择执行通道"):
+            self.store.action("create_task", {"title": "交给 Agent", "project_id": ready["id"]})
+        task = self.store.action("create_task", {"title": "交给 Agent", "project_id": ready["id"], "runtime": "codex", "executor_type": "self"})
+        self.assertEqual((task["executor_type"], task["runtime"], task["status"]), ("agent", "codex", "Inbox"))
+        with self.assertRaisesRegex(ValueError, "没有有效的本地工作目录"):
+            self.store.action("update_task", {"id": task["id"], "project_id": bare["id"]})
+        with self.assertRaisesRegex(ValueError, "未知操作"):
             self.store.action("complete_task", {"id": task["id"]})
 
     def test_knowledge_requires_approval_and_does_not_overwrite(self):
         vault = Path(self.temp.name) / "vault"
         vault.mkdir()
-        task = self.store.action("create_task", {"title": "调研"})
+        task = self.agent_task()
         proposal = self.store.action("propose_knowledge", {"task_id": task["id"], "title": "调研结果", "content": "正文"})
         self.assertEqual(list(vault.rglob("*.md")), [])
         self.store.action("save_settings", {"obsidian_vault": str(vault)})
@@ -62,7 +82,7 @@ class StoreTests(unittest.TestCase):
         vault.mkdir()
         outside.mkdir()
         (vault / "Personal-OS").symlink_to(outside, target_is_directory=True)
-        task = self.store.action("create_task", {"title": "调研"})
+        task = self.agent_task()
         proposal = self.store.action("propose_knowledge", {"task_id": task["id"], "title": "不应外写", "content": "正文"})
         self.store.action("save_settings", {"obsidian_vault": str(vault)})
         with self.assertRaisesRegex(ValueError, "必须位于"):
@@ -74,7 +94,7 @@ class StoreTests(unittest.TestCase):
         workspace.mkdir()
         project = self.store.action("create_project", {"name": "项目"})
         self.store.action("update_project", {"id": project["id"], "workspace_path": str(workspace)})
-        task = self.store.action("create_task", {"title": "实现功能", "project_id": project["id"], "executor_type": "agent"})
+        task = self.store.action("create_task", {"title": "实现功能", "project_id": project["id"], "runtime": "codex"})
 
         class FakeProcess(FakeAgentProcess):
             def behave(self, prompt):
@@ -94,8 +114,6 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(self.store.all("agent_run")[0]["status"], "Finished")
         artifact = self.store.all("artifact")[0]
         self.assertEqual((artifact["name"], artifact["change"], artifact["status"]), ("hello.txt", "Created", "Review"))
-        with self.assertRaisesRegex(ValueError, "必须经过审核"):
-            self.store.action("complete_task", {"id": task["id"]})
         self.store.action("review_agent", {"task_id": task["id"], "choice": "approve"})
         self.assertEqual(self.store.get("task", task["id"])["status"], "Done")
         self.assertEqual(self.store.get("artifact", artifact["id"])["status"], "Approved")
@@ -105,7 +123,7 @@ class StoreTests(unittest.TestCase):
         workspace.mkdir()
         project = self.store.action("create_project", {"name": "项目"})
         self.store.action("update_project", {"id": project["id"], "workspace_path": str(workspace)})
-        task = self.store.action("create_task", {"title": "执行中任务", "project_id": project["id"], "executor_type": "agent"})
+        task = self.store.action("create_task", {"title": "执行中任务", "project_id": project["id"], "runtime": "codex"})
         started = threading.Event()
         stopped = threading.Event()
 

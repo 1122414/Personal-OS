@@ -22,13 +22,17 @@ class RepairTests(unittest.TestCase):
         self.temp.cleanup()
 
     def task(self, title="任务", **fields):
-        return self.store.action("create_task", {"title": title, **fields})
+        if "project_id" not in fields:
+            workspace = self.root / "repo"
+            workspace.mkdir(exist_ok=True)
+            fields["project_id"] = self.store.action("create_project", {"name": title, "workspace_path": str(workspace)})["id"]
+        return self.store.action("create_task", {"title": title, "runtime": "codex", **fields})
 
     def test_late_events_block_confirmation_and_refresh_preserves_manual_draft(self):
-        task = self.task()
+        todo = self.store.action("create_todo", {"title": "任务", "today": True})
         log = self.store.action("draft_log", {})
         self.store.action("update_log", {"id": log["id"], "summary": "用户的重要补充"})
-        self.store.action("complete_task", {"id": task["id"]})
+        self.store.action("toggle_todo", {"id": todo["id"]})
         self.assertTrue(self.store.history(local_day())["log"]["stale"])
         with self.assertRaisesRegex(ValueError, "新增事件"):
             self.store.action("confirm_log", {"id": log["id"]})
@@ -42,9 +46,9 @@ class RepairTests(unittest.TestCase):
 
     def test_manual_acknowledgement_rejects_events_arriving_during_edit(self):
         log = self.store.action("draft_log", {})
-        self.task("first")
+        self.store.action("create_todo", {"title": "first"})
         shown = self.store.history(local_day())["log"]
-        self.task("later")
+        self.store.action("create_todo", {"title": "later"})
         with self.assertRaisesRegex(ValueError, "新增事件"):
             self.store.action("update_log", {"id": log["id"], "summary": "checked", "acknowledge_events": True, "source_event_ids": shown["latest_source_event_ids"]})
 
@@ -91,7 +95,7 @@ class RepairTests(unittest.TestCase):
         with patch.object(self.store, "_codex_readonly", return_value="current"):
             pulse = self.store.action("generate_project_pulse", {"id": project["id"]})
         self.assertFalse(self.store.pulse_stale(pulse))
-        self.task(project_id=project["id"])
+        self.store.action("create_todo", {"title": "推进", "project_id": project["id"]})
         self.assertTrue(self.store.pulse_stale(pulse))
 
     def test_failed_and_canceled_runs_keep_evidence_and_agent_constraints(self):
@@ -102,7 +106,7 @@ class RepairTests(unittest.TestCase):
                 project = self.store.action("create_project", {"name": "项目", "workspace_path": str(workspace)})
                 self.store.action("create_decision", {"title": "DECISION_SENTINEL", "project_id": project["id"]})
                 self.store.action("create_rule", {"text": "RULE_SENTINEL", "category": "Agent"})
-                task = self.task(project_id=project["id"], executor_type="agent")
+                task = self.task(project_id=project["id"])
                 started, stopped = threading.Event(), threading.Event()
                 prompts = []
 
@@ -150,7 +154,7 @@ class RepairTests(unittest.TestCase):
         workspace = self.root / "timeout"
         workspace.mkdir()
         project = self.store.action("create_project", {"name": "timeout", "workspace_path": str(workspace)})
-        task = self.task(project_id=project["id"], executor_type="agent")
+        task = self.task(project_id=project["id"])
 
         class Process(FakeAgentProcess):
             def behave(self, prompt):

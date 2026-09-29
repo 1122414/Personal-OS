@@ -77,15 +77,17 @@ class WorkspaceTests(unittest.TestCase):
         link = self.store.action("add_material", {"record_id": record["id"], "url": "https://example.com/article"})
         self.assertEqual(link["read_status"], "saved")
 
-    def test_A12_only_explicit_conversion_creates_task_and_is_idempotent(self):
+    def test_A12_only_explicit_conversion_creates_agent_task_linked_to_record(self):
         record = self.record()
         self.assertFalse(self.store.all("task"))
-        task = self.store.action("record_to_task", {"id": record["id"]})
-        again = self.store.action("record_to_task", {"id": record["id"]})
-        self.assertEqual(task["id"], again["id"])
+        workspace = Path(self.temp.name) / "repo"
+        workspace.mkdir()
+        project = self.store.action("create_project", {"name": "项目", "workspace_path": str(workspace)})
+        task = self.store.action("create_task", {"title": record["title"], "record_id": record["id"], "project_id": project["id"], "runtime": "codex"})
         self.assertEqual(task["record_id"], record["id"])
         self.assertEqual(task["status"], "Inbox")
-        self.assertEqual(task["executor_type"], "self")
+        self.assertEqual(task["executor_type"], "agent")
+        self.assertEqual(self.store.get("record", record["id"])["task_id"], task["id"])
 
     def test_A13_export_keeps_original_attachment_and_never_overwrites(self):
         vault = Path(self.temp.name) / "vault"

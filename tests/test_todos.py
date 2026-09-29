@@ -90,12 +90,16 @@ class TodoTests(unittest.TestCase):
         workspace.mkdir()
         project = self.store.action("create_project", {"name": "项目", "workspace_path": str(workspace)})
         record = self.store.action("create_record", {"content": "来自记录"})
-        linked = self.store.action("record_to_task", {"id": record["id"]})
-        inbox = self.store.action("create_task", {"title": "准备面试", "description": "1.整理简历问题", "project_id": project["id"]})
-        done = self.store.action("create_task", {"title": "做完的"})
-        self.store.action("complete_task", {"id": done["id"]})
-        agent = self.store.action("create_task", {"title": "Agent 任务", "project_id": project["id"], "executor_type": "agent", "runtime": "kimi"})
-        self_with_run = self.store.action("create_task", {"title": "跑过 Agent"})
+
+        def legacy(title, **fields):
+            return self.store.put("task", {"title": title, "description": "", "status": "Inbox", "executor_type": "self", "runtime": None, "project_id": None, **fields})
+
+        linked = legacy("来自记录", record_id=record["id"])
+        self.store.put("record", {**record, "task_id": linked["id"]})
+        inbox = legacy("准备面试", description="1.整理简历问题", project_id=project["id"])
+        done = legacy("做完的", status="Done", completed_at="2026-09-28T10:00:00+08:00")
+        agent = self.store.action("create_task", {"title": "Agent 任务", "project_id": project["id"], "runtime": "kimi"})
+        self_with_run = legacy("跑过 Agent")
         self.store.put("agent_run", {"task_id": self_with_run["id"], "status": "Finished", "workspace_path": str(workspace)})
         self.store.close()
 

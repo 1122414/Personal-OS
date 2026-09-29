@@ -132,7 +132,13 @@ class WorkBuddyTests(unittest.TestCase):
         self.store.action("sync_workbuddy", {})
         item = self.store.all("intelligence_item")[0]
         self.store.put("intelligence_item", {**item, "title": "长" * 300})
-        task = self.store.action("research_intelligence", {"id": item["id"]})
+        with self.assertRaisesRegex(ValueError, "项目"):
+            self.store.action("research_intelligence", {"id": item["id"], "runtime": "codex"})
+        workspace = Path(self.temp.name) / "repo"
+        workspace.mkdir()
+        project = self.store.action("create_project", {"name": "调研", "workspace_path": str(workspace)})
+        task = self.store.action("research_intelligence", {"id": item["id"], "project_id": project["id"], "runtime": "codex"})
+        self.assertEqual(self.store.get("intelligence_item", item["id"])["feedback"], "deep_research")
         self.assertEqual(task["intelligence_id"], item["id"])
         self.assertIn(str(self.transcript), task["description"])
         self.assertIn("有来源的研究结果", task["description"])

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
-import { Button, Empty, Panel, STATUS, PRIORITY, dateLabel, runDuration, timeLabel } from '../ui.jsx'
+import { Button, Empty, Panel, STATUS, runDuration, timeLabel } from '../ui.jsx'
 
-const tabs = [['all', '全部'], ['Running', '进行中'], ['Review', '待审核'], ['Done', '已完成'], ['Blocked', '已阻塞'], ['archived', '已归档']]
-const COLUMNS = [['Inbox', '待办'], ['Planned', '计划中'], ['Running', '运行中'], ['Review', '待审核'], ['Done', '完成'], ['Blocked', '阻塞']]
+const tabs = [['all', '全部'], ['Inbox', '待派出'], ['Running', '运行中'], ['Review', '待审核'], ['Done', '已完成'], ['Blocked', '失败或取消'], ['archived', '已归档']]
+const COLUMNS = [['Inbox', '待派出'], ['Running', '运行中'], ['Review', '待审核'], ['Done', '已完成'], ['Blocked', '失败或取消']]
+const column = task => task.status === 'Planned' ? 'Inbox' : task.status
 const DONE_LIMIT = 12
 const RUN_STATUS = { Running: '运行中', Finished: '已完成', Failed: '失败', Canceled: '已取消', Interrupted: '已中断' }
 
@@ -30,20 +31,20 @@ function AgentRuns({ runs, agents }) {
 
 function Board({ tasks, projects, latestRun, selectedId, select }) {
   return <div className="task-board">{COLUMNS.map(([status, label]) => {
-    const column = tasks.filter(task => task.status === status)
-    const shown = status === 'Done' ? column.slice(0, DONE_LIMIT) : column
+    const cards = tasks.filter(task => column(task) === status)
+    const shown = status === 'Done' ? cards.slice(0, DONE_LIMIT) : cards
     return <section className={`board-column board-${status}`} key={status}>
-      <header><span>{label}</span><small>{column.length}</small></header>
+      <header><span>{label}</span><small>{cards.length}</small></header>
       {shown.map(task => {
         const last = latestRun(task.id)
         const project = projects.find(item => item.id === task.project_id)?.name
         return <button key={task.id} className={`board-card ${selectedId === task.id ? 'selected' : ''}`} onClick={() => select(task.id)}>
           <strong>{task.title}</strong>
-          <small>{[task.executor_type === 'agent' ? task.agent_id || 'Agent' : '我自己', last && runDuration(last), project].filter(Boolean).join(' · ')}</small>
+          <small>{[task.agent_id || 'Agent', last && runDuration(last), project].filter(Boolean).join(' · ')}</small>
           {last?.log_tail?.length > 0 && <span className="board-log">{last.log_tail.at(-1)}</span>}
         </button>
       })}
-      {column.length > shown.length && <small className="board-more">另有 {column.length - shown.length} 项，切到列表查看</small>}
+      {cards.length > shown.length && <small className="board-more">另有 {cards.length - shown.length} 项，切到列表查看</small>}
     </section>
   })}</div>
 }
@@ -54,7 +55,7 @@ export default function Tasks({ data, run, open, focus }) {
   const [selectedId, select] = useState(focus || null)
   useEffect(() => { if (focus) select(focus) }, [focus])
   const agents = data.runtime?.agents || []
-  const filtered = view === 'board' ? data.tasks.filter(task => !task.archived_at) : data.tasks.filter(task => tab === 'archived' ? !!task.archived_at : !task.archived_at && (tab === 'all' || task.status === tab))
+  const filtered = view === 'board' ? data.tasks.filter(task => !task.archived_at) : data.tasks.filter(task => tab === 'archived' ? !!task.archived_at : !task.archived_at && (tab === 'all' || column(task) === tab))
   const selected = filtered.find(task => task.id === selectedId) || filtered[0]
   const project = data.projects.find(item => item.id === selected?.project_id)
   const runs = data.agent_runs.filter(item => item.task_id === selected?.id)
@@ -63,23 +64,23 @@ export default function Tasks({ data, run, open, focus }) {
   const latestRun = taskId => data.agent_runs.find(item => item.task_id === taskId)
 
   return <div className="page tasks-page">
-    <div className="page-toolbar">{view === 'list' ? <div className="tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</div> : <span className="muted">按状态分列，已归档任务不显示。</span>}<div className="inline-actions"><div className="tabs view-toggle" role="group" aria-label="任务视图">{[['list', '列表'], ['board', '看板']].map(([key, label]) => <button key={key} className={view === key ? 'active' : ''} aria-pressed={view === key} onClick={() => setView(key)}>{label}</button>)}</div><Button variant="primary" onClick={() => open('task')}>＋ 新建任务</Button></div></div>
+    <div className="page-toolbar">{view === 'list' ? <div className="tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</div> : <span className="muted">按状态分列，已归档的不显示。</span>}<div className="inline-actions"><div className="tabs view-toggle" role="group" aria-label="Agent 任务视图">{[['list', '列表'], ['board', '看板']].map(([key, label]) => <button key={key} className={view === key ? 'active' : ''} aria-pressed={view === key} onClick={() => setView(key)}>{label}</button>)}</div><Button variant="primary" onClick={() => open('task')}>＋ 新建 Agent 任务</Button></div></div>
     <div className={`split-layout task-split ${view === 'board' ? 'board-split' : ''}`}>
       {view === 'board' ? <Panel className="list-panel board-panel"><Board tasks={filtered} projects={data.projects} latestRun={latestRun} selectedId={selected?.id} select={select} /></Panel> : <Panel className="list-panel">
-        {filtered.length ? <div className="task-table"><div className="table-head"><span>任务名称</span><span>所属项目</span><span>截止时间</span><span>优先级</span><span>状态</span></div>{filtered.map(task => <button key={task.id} className={`task-row ${selected?.id === task.id ? 'selected' : ''}`} onClick={() => select(task.id)}>
+        {filtered.length ? <div className="task-table"><div className="table-head"><span>任务名称</span><span>所属项目</span><span>通道</span><span>执行</span><span>状态</span></div>{filtered.map(task => <button key={task.id} className={`task-row ${selected?.id === task.id ? 'selected' : ''}`} onClick={() => select(task.id)}>
           <span className="task-title"><i className={`task-ring ${task.status === 'Done' ? 'checked' : ''}`}>{task.status === 'Done' ? '✓' : ''}</i><strong>{task.title}</strong></span>
-          <span>{data.projects.find(item => item.id === task.project_id)?.name || '—'}</span><span>{dateLabel(task.deadline)}</span><span className={`priority priority-${task.priority}`}>{PRIORITY[task.priority]}</span><span className={`status status-${task.status}`}>{STATUS[task.status]}</span>
-        </button>)}</div> : <Empty title="这里还没有任务" detail="从一句话开始，逐步让计划变成成果。" action={<Button onClick={() => open('task')}>创建任务</Button>} />}
+          <span>{data.projects.find(item => item.id === task.project_id)?.name || '—'}</span><span>{task.agent_id || '—'}</span><span>{data.agent_runs.filter(item => item.task_id === task.id).length || '—'}{data.agent_runs.some(item => item.task_id === task.id) ? ' 次' : ''}</span><span className={`status status-${task.status}`}>{STATUS[task.status]}</span>
+        </button>)}</div> : <Empty title="还没有 Agent 任务" detail="把要改代码或整理文件的事交给 Agent：选一个有本地目录的项目，写清要求与完成标准。自己要做的事请放进「待办」。" action={<Button onClick={() => open('task')}>新建 Agent 任务</Button>} />}
       </Panel>}
       <Panel className="detail-panel">
         {selected ? <><div className="detail-title"><div><span className="overline">TASK DETAIL</span><h2>{selected.title}</h2></div><span className={`status status-${selected.status}`}>{STATUS[selected.status]}</span></div>
-          <div className="meta-grid"><div><small>所属项目</small><strong>{project?.name || '无项目'}</strong></div><div><small>截止时间</small><strong>{dateLabel(selected.deadline)}</strong></div><div><small>优先级</small><strong>{PRIORITY[selected.priority]}</strong></div><div><small>执行人</small><strong>{selected.executor_type === 'agent' ? selected.agent_id || '待选择 Agent' : '我自己'}</strong></div></div>
-          <div className="detail-section">{selected.record_id && <a href={`#records/${selected.record_id}`}>查看来源记录 →</a>}<h3>任务描述</h3><p>{selected.description || '暂无描述。可以编辑任务补充背景与验收标准。'}</p></div>
+          <div className="meta-grid"><div><small>项目目录</small><strong>{project?.name || '未关联项目'}</strong></div><div><small>执行通道</small><strong>{selected.agent_id || '未选择'}</strong></div><div><small>执行次数</small><strong>{runs.length} 次</strong></div><div><small>最近一次</small><strong>{runs[0] ? `${RUN_STATUS[runs[0].status] || runs[0].status} · ${runDuration(runs[0])}` : '尚未派出'}</strong></div></div>
+          <div className="detail-section">{selected.record_id && <a href={`#records/${selected.record_id}`}>查看来源记录 →</a>}<h3>要求与完成标准</h3><p className="pre-wrap">{selected.description || '还没写。Agent 会照着这里执行和自检，建议编辑补充。'}</p></div>
           {runs.length > 0 && <AgentRuns runs={runs} agents={agents} />}
           {artifacts.length > 0 && <div className="detail-section"><h3>产物</h3>{artifacts.map(item => <div className="artifact-row" key={item.id}>{item.name} · {{ Created: '新建', Modified: '修改', Deleted: '删除' }[item.change] || '变更'}</div>)}</div>}
           <div className="detail-section"><h3>活动记录</h3>{events.length ? events.map(event => <div className="activity-row" key={event.id}><span>{timeLabel(event.created_at)}</span><span>{event.type}</span></div>) : <p>暂无活动。</p>}</div>
-          <div className="detail-actions wrap"><Button onClick={() => open('task-edit', selected)}>编辑任务</Button>{!['Running','Review'].includes(selected.status) && <Button onClick={() => run('archive_task', { id: selected.id, restore: !!selected.archived_at })}>{selected.archived_at ? '取消归档' : '归档'}</Button>}{['Done','Blocked'].includes(selected.status) && <Button onClick={() => run('reopen_task', { id: selected.id })}>重新打开</Button>}{!selected.archived_at && selected.executor_type === 'self' && ['Inbox','Planned','Running'].includes(selected.status) && <Button variant="primary" onClick={() => run('complete_task', { id: selected.id })}>确认完成</Button>}{!selected.archived_at && selected.executor_type === 'agent' && ['Inbox','Planned','Blocked'].includes(selected.status) && <Dispatch key={selected.id} task={selected} agents={agents} latest={runs[0]} run={run} />}{selected.executor_type === 'agent' && selected.status === 'Running' && runs[0] && <Button onClick={() => run('cancel_agent', { id: runs[0].id })}>取消执行</Button>}{selected.status === 'Done' && <Button onClick={() => open('knowledge', selected)}>沉淀为知识</Button>}</div>
-        </> : <Empty title="选择一个任务" detail="任务详情、执行记录与产物会在这里呈现。" />}
+          <div className="detail-actions wrap"><Button onClick={() => open('task-edit', selected)}>编辑</Button>{!['Running','Review'].includes(selected.status) && <Button onClick={() => run('archive_task', { id: selected.id, restore: !!selected.archived_at })}>{selected.archived_at ? '取消归档' : '归档'}</Button>}{selected.status === 'Done' && <Button onClick={() => run('reopen_task', { id: selected.id })}>重新打开</Button>}{!selected.archived_at && ['Inbox','Planned','Blocked'].includes(selected.status) && <Dispatch key={selected.id} task={selected} agents={agents} latest={runs[0]} run={run} />}{selected.status === 'Running' && runs[0] && <Button onClick={() => run('cancel_agent', { id: runs[0].id })}>取消执行</Button>}{selected.status === 'Done' && <Button onClick={() => open('knowledge', selected)}>沉淀为知识</Button>}</div>
+        </> : <Empty title="选择一个 Agent 任务" detail="要求、执行记录与产物会在这里呈现。" />}
       </Panel>
     </div>
   </div>

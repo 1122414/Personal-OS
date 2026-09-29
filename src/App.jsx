@@ -24,7 +24,7 @@ function initialPage() {
 }
 
 const pageTitles = {
-  today: '早上好', records: '记录', todos: '待办', learning: '学习', tasks: '任务', projects: '项目', intelligence: 'AI 日报',
+  today: '早上好', records: '记录', todos: '待办', learning: '学习', tasks: 'Agent 任务', projects: '项目', intelligence: 'AI 日报',
   review: '审核', history: '历史', settings: '设置',
 }
 
@@ -44,22 +44,24 @@ function FormModal({ modal, data, run, close }) {
   const kind = modal.kind
   const editing = kind.endsWith('-edit')
   const names = {
-    task: '新建任务', 'task-edit': '编辑任务', 'todo-edit': '编辑待办', project: '新建项目', 'project-edit': '编辑项目',
+    task: '新建 Agent 任务', 'task-edit': '编辑 Agent 任务', 'todo-edit': '编辑待办', project: '新建项目', 'project-edit': '编辑项目',
     decision: '记录决策', 'decision-edit': '编辑决策', pulse: '编辑项目脉搏',
     'log-edit': '修改日报', channel: '新建频道', 'channel-edit': '编辑频道', intelligence: '添加情报',
     rule: '新建规则', 'rule-edit': '编辑规则', knowledge: '提出知识沉淀',
     'knowledge-edit': '修改并写入 Obsidian', 'agent-revision': '要求 Agent 继续修改',
   }
 
+  const agentProjects = data.projects.filter(project => project.workspace_path && project.status !== 'Completed')
+
   async function submit(event) {
     event.preventDefault()
     const values = Object.fromEntries(new FormData(event.currentTarget).entries())
+    const dispatch = event.nativeEvent.submitter?.value === 'dispatch'
     let operation
     let payload = values
     if (kind === 'task' || kind === 'task-edit') {
       operation = editing ? 'update_task' : 'create_task'
-      const { executor, ...fields } = values
-      payload = { ...fields, executor_type: executor === 'self' ? 'self' : 'agent', ...(executor === 'self' ? {} : { runtime: executor }), intelligence_id: item.intelligence_id || null, project_id: values.project_id || null, deadline: values.deadline || null, ...(editing ? { id: item.id } : {}) }
+      payload = editing ? { ...values, id: item.id } : { ...values, intelligence_id: item.intelligence_id || null, record_id: item.record_id || null }
     } else if (kind === 'todo-edit') {
       operation = 'update_todo'; payload = { id: item.id, title: values.title, note: values.note, project_id: values.project_id || null }
     } else if (kind === 'project' || kind === 'project-edit') {
@@ -87,15 +89,16 @@ function FormModal({ modal, data, run, close }) {
       operation = 'review_agent'; payload = { task_id: item.id, choice: 'revise', instruction: values.instruction }
     }
     const result = await run(operation, payload)
+    if (result && dispatch) await run('start_agent', { task_id: result.id, runtime: result.runtime })
     if (result) close()
   }
 
   return <Modal title={names[kind] || kind} onClose={close}><form onSubmit={submit} className="form-grid">
     {(kind === 'task' || kind === 'task-edit') && <>
       <Field label="任务标题"><input name="title" defaultValue={item.title || ''} required autoFocus maxLength={200} /></Field>
-      <Field label="描述与完成标准"><textarea name="description" defaultValue={item.description || ''} rows={4} /></Field>
-      <div className="form-columns"><Field label="所属项目"><select name="project_id" defaultValue={item.project_id || ''}><option value="">无项目</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field><Field label="优先级"><select name="priority" defaultValue={item.priority || 'Medium'}><option value="High">高</option><option value="Medium">中</option><option value="Low">低</option></select></Field></div>
-      <div className="form-columns"><Field label="截止日期"><input type="date" name="deadline" defaultValue={item.deadline || ''} /></Field><Field label="执行方式"><select name="executor" defaultValue={item.executor_type === 'agent' ? item.runtime || 'codex' : 'self'}><option value="self">我自己</option>{(data.runtime?.agents || []).map(agent => <option key={agent.id} value={agent.id}>{agent.label}{agent.available ? '' : '（本机未找到）'}</option>)}</select></Field></div>
+      <Field label="要求与完成标准（Agent 会照着这里做和自检）"><textarea name="description" defaultValue={item.description || ''} rows={5} /></Field>
+      {agentProjects.length ? <div className="form-columns"><Field label="在哪个项目目录里做"><select name="project_id" defaultValue={agentProjects.some(project => project.id === item.project_id) ? item.project_id : agentProjects[0].id} required disabled={['Running', 'Review'].includes(item.status)}>{agentProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field><Field label="执行通道"><select name="runtime" defaultValue={item.runtime || (data.runtime?.agents || []).find(agent => agent.available)?.id || 'codex'} required disabled={['Running', 'Review'].includes(item.status)}>{(data.runtime?.agents || []).map(agent => <option key={agent.id} value={agent.id}>{agent.label}{agent.available ? '' : '（本机未找到）'}</option>)}</select></Field></div>
+        : <p className="form-hint">还没有设置本地目录的项目。Agent 任务必须在某个项目目录里执行，请先到「项目」里给项目填写本地工作目录。</p>}
       {!editing && <input type="hidden" name="source" value={item.source || 'Manual'} />}
     </>}
     {kind === 'todo-edit' && <>
@@ -114,7 +117,8 @@ function FormModal({ modal, data, run, close }) {
     {kind === 'knowledge' && <><Field label="知识标题"><input name="title" defaultValue={item.title || ''} required autoFocus /></Field><Field label="拟保存内容"><textarea name="content" rows={8} defaultValue={item.result || item.description || ''} required /></Field></>}
     {kind === 'knowledge-edit' && <><Field label="知识标题"><input name="title" defaultValue={item.title} required autoFocus /></Field><Field label="写入内容"><textarea name="content" rows={10} defaultValue={item.content} required /></Field></>}
     {kind === 'agent-revision' && <Field label="修改要求"><textarea name="instruction" rows={6} required autoFocus placeholder="说明需要修改的具体内容" /></Field>}
-    <div className="modal-actions"><Button type="button" onClick={close}>取消</Button><Button type="submit" variant="primary">{kind === 'knowledge-edit' ? '确认写入' : editing ? '保存修改' : '确认'}</Button></div>
+    {kind === 'task' ? <div className="modal-actions"><Button type="button" onClick={close}>取消</Button><Button type="submit" value="create" disabled={!agentProjects.length}>创建</Button><Button type="submit" value="dispatch" variant="primary" disabled={!agentProjects.length}>创建并派出</Button></div>
+      : <div className="modal-actions"><Button type="button" onClick={close}>取消</Button><Button type="submit" variant="primary">{kind === 'knowledge-edit' ? '确认写入' : editing ? '保存修改' : '确认'}</Button></div>}
   </form></Modal>
 }
 
@@ -170,7 +174,7 @@ export default function App() {
     ...(data.records || []).filter(item => `${item.title} ${item.content}`.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'records', label: '记录' })),
     ...(data.learning_topics || []).filter(item => `${item.title} ${item.goal}`.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'learning', label: '学习' })),
     ...data.todos.filter(item => !item.archived_at && item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'todos', label: '待办' })),
-    ...data.tasks.filter(item => item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'tasks', label: '任务' })),
+    ...data.tasks.filter(item => item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'tasks', label: 'Agent 任务' })),
     ...data.projects.filter(item => item.name.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'projects', title: item.name, label: '项目' })),
   ], [search, data])
 

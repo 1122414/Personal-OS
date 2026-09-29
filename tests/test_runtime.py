@@ -43,7 +43,7 @@ class RuntimeTests(unittest.TestCase):
         self.workspace.mkdir()
         self.store = Store(self.root / "test.sqlite3")
         project = self.store.action("create_project", {"name": "项目", "workspace_path": str(self.workspace)})
-        self.task = self.store.action("create_task", {"title": "派出去", "project_id": project["id"], "executor_type": "agent"})
+        self.task = self.store.action("create_task", {"title": "派出去", "project_id": project["id"], "runtime": "codex"})
         patcher = patch.dict(RUNTIMES, {"fake": FakeRuntime()})
         patcher.start()
         self.addCleanup(patcher.stop)

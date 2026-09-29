@@ -18,7 +18,7 @@ from .common import identifier, required_text, stamp, synchronized
 WORKSPACE_KINDS = ("record", "material", "learning_topic")
 WORKSPACE_ACTIONS = (
     "create_record", "update_record", "add_material", "create_learning_topic",
-    "update_learning_topic", "link_record", "record_to_task", "export_workspace_note",
+    "update_learning_topic", "link_record", "export_workspace_note",
     "import_obsidian_record",
 )
 RECORD_TYPES = {"note", "idea", "resource", "status"}
@@ -225,18 +225,6 @@ class WorkspaceMixin:
             topic.update(record_ids=ids, revision=topic["revision"] + 1)
             topic = self.put("learning_topic", topic)
         return topic
-
-    def record_to_task(self, p):
-        record = self._existing("record", p)
-        if record.get("task_id") and self.get("task", record["task_id"]):
-            return self.get("task", record["task_id"])
-        task = self.create_task({"title": p.get("title") or record["title"], "description": record["content"],
-                                 "project_id": p.get("project_id"), "source": "Manual"})
-        task["record_id"] = record["id"]
-        task = self.put("task", task)
-        record["task_id"] = task["id"]
-        self.put("record", record)
-        return task
 
     @synchronized
     def workspace_markdown(self, kind, object_id):

@@ -277,7 +277,6 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                 "update_project": self.update_project,
                 "create_task": self.create_task,
                 "update_task": self.update_task,
-                "complete_task": self.complete_task,
                 "archive_task": self.archive_task,
                 "reopen_task": self.reopen_task,
                 "create_backup": self.create_backup,
@@ -349,64 +348,63 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
         self.event("ProjectUpdated", "project", item["id"], item["id"], {"name": item["name"]})
         return item
 
+    def _agent_project(self, project_id: Any) -> str:
+        project = self.get("project", project_id or "")
+        if not project:
+            raise ValueError("请选择 Agent 工作的项目")
+        workspace = project.get("workspace_path") or ""
+        if not workspace or not Path(workspace).is_dir():
+            raise ValueError(f"项目「{project['name']}」没有有效的本地工作目录，请先在项目中填写")
+        return project["id"]
+
     def create_task(self, p: dict[str, Any]) -> dict[str, Any]:
-        project_id = p.get("project_id") or None
-        if project_id and not self.get("project", project_id):
-            raise ValueError("项目不存在")
+        project_id = self._agent_project(p.get("project_id"))
+        if not p.get("runtime"):
+            raise ValueError("请选择执行通道")
         source = p.get("source") or "Manual"
         if source not in TASK_SOURCES:
             raise ValueError("任务来源无效")
         intelligence_id = p.get("intelligence_id") or None
         if intelligence_id and not self.get("intelligence_item", intelligence_id):
             raise ValueError("来源资料不存在")
+        record = self.get("record", p.get("record_id") or "") if p.get("record_id") else None
+        if p.get("record_id") and not record:
+            raise ValueError("来源记录不存在")
+        runtime = self._task_runtime(p["runtime"])
         item = self.put("task", {
             "title": required_text(p.get("title"), "任务标题", 200),
             "description": (p.get("description") or "").strip()[:10000],
-            "status": "Inbox", "priority": p.get("priority") if p.get("priority") in ("High", "Medium", "Low") else "Medium",
-            "project_id": project_id, "source": source, "planned_date": None,
-            "deadline": p.get("deadline") or None,
-            "executor_type": p.get("executor_type") if p.get("executor_type") in ("self", "agent") else "self",
-            "runtime": self._task_runtime(p.get("runtime")) if p.get("executor_type") == "agent" else None,
+            "status": "Inbox", "project_id": project_id, "source": source,
+            "executor_type": "agent", "runtime": runtime, "agent_id": RUNTIMES[runtime].label,
             "result": "", "review_status": None, "created_by": "user",
-            "intelligence_id": intelligence_id,
+            "intelligence_id": intelligence_id, "record_id": record["id"] if record else None,
         })
-        item["agent_id"] = RUNTIMES[item["runtime"]].label if item["runtime"] else None
-        item = self.put("task", item)
+        if record:
+            record["task_id"] = item["id"]
+            self.put("record", record)
         self.event("TaskCreated", "task", item["id"], project_id, {"title": item["title"], "source": source})
+        if intelligence_id:
+            intel = self.get("intelligence_item", intelligence_id)
+            self.put("intelligence_item", {**intel, "feedback": "deep_research"})
+            self.event("IntelligenceResearchRequested", "intelligence_item", intelligence_id, intel.get("project_id"), {"task_id": item["id"]})
         return item
 
     def update_task(self, p: dict[str, Any]) -> dict[str, Any]:
         item = self._existing("task", p)
-        if item["status"] in ("Running", "Review") and "executor_type" in p and p["executor_type"] != item["executor_type"]:
-            raise ValueError("执行中的 Agent 任务不能改变执行方式")
-        for field in ("title", "description", "priority", "deadline", "project_id", "executor_type", "runtime"):
-            if field in p:
-                item[field] = p[field]
-        item["title"] = required_text(item["title"], "任务标题", 200)
-        if item["priority"] not in ("High", "Medium", "Low"):
-            raise ValueError("优先级无效")
-        if item.get("project_id") and not self.get("project", item["project_id"]):
-            raise ValueError("项目不存在")
-        if item["executor_type"] not in ("self", "agent"):
-            raise ValueError("执行方式无效")
-        item["runtime"] = self._task_runtime(item.get("runtime")) if item["executor_type"] == "agent" else None
-        item["agent_id"] = RUNTIMES[item["runtime"]].label if item["runtime"] else None
+        running = item["status"] in ("Running", "Review")
+        if running and any(field in p and p[field] != item.get(field) for field in ("project_id", "runtime")):
+            raise ValueError("执行中或待审核的任务不能更换项目或通道")
+        if "title" in p:
+            item["title"] = required_text(p["title"], "任务标题", 200)
+        if "description" in p:
+            item["description"] = (p["description"] or "").strip()[:10000]
+        if "project_id" in p:
+            item["project_id"] = self._agent_project(p["project_id"])
+        if "runtime" in p:
+            item["runtime"] = self._task_runtime(p["runtime"])
+            item["agent_id"] = RUNTIMES[item["runtime"]].label
         item = self.put("task", item)
         self.event("TaskUpdated", "task", item["id"], item.get("project_id"), {"title": item["title"]})
-        return item
-
-    def complete_task(self, p: dict[str, Any]) -> dict[str, Any]:
-        item = self._existing("task", p)
-        if item.get("archived_at"):
-            raise ValueError("请先取消归档")
-        if item["executor_type"] == "agent":
-            raise ValueError("Agent 任务必须经过审核")
-        if item["status"] not in ("Inbox", "Planned", "Running"):
-            raise ValueError("当前任务状态不能直接完成")
-        item["status"] = "Done"
-        item["completed_at"] = stamp()
-        item = self.put("task", item)
-        self.event("TaskCompleted", "task", item["id"], item.get("project_id"), {"title": item["title"]})
         return item
 
     def archive_task(self, p: dict[str, Any]) -> dict[str, Any]:
@@ -652,12 +650,9 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
         task = self.create_task({
             "title": f"深入研究：{item['title']}"[:200],
             "description": f"来源：{item['source']}\n{item.get('source_path') or item.get('url') or ''}\n\n研究原因：{item['why_recommended']}\n\n来源摘要：{item.get('summary') or ''}",
-            "project_id": item.get("project_id"), "source": "Intelligence",
-            "executor_type": "agent", "intelligence_id": item["id"],
+            "project_id": p.get("project_id") or item.get("project_id"), "runtime": p.get("runtime"),
+            "source": "Intelligence", "intelligence_id": item["id"],
         })
-        item["feedback"] = "deep_research"
-        self.put("intelligence_item", item)
-        self.event("IntelligenceResearchRequested", "intelligence_item", item["id"], item.get("project_id"), {"task_id": task["id"]})
         return task
 
     def refresh_channel(self, p: dict[str, Any]) -> dict[str, Any]:
