@@ -25,6 +25,7 @@ from .learning_summary import LearningSummaryMixin, SUMMARY_KINDS, SUMMARY_ACTIO
 from .recall import RecallMixin, RECALL_KINDS, RECALL_ACTIONS
 from .traces import TracesMixin, TRACE_KINDS, TRACE_ACTIONS
 from .obsidian_home import ObsidianHomeMixin, HOME_ACTIONS
+from .todos import TodoMixin, TODO_KINDS, TODO_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
@@ -35,7 +36,7 @@ KINDS = (
     "project", "task", "daily_plan", "daily_log", "decision", "agent_run",
     "artifact", "intelligence_channel", "intelligence_item", "personal_rule",
     "knowledge_proposal", "daily_brief", "settings",
-) + WORKSPACE_KINDS + LEARNING_KINDS + SUMMARY_KINDS + RECALL_KINDS + TRACE_KINDS
+) + TODO_KINDS + WORKSPACE_KINDS + LEARNING_KINDS + SUMMARY_KINDS + RECALL_KINDS + TRACE_KINDS
 TASK_STATES = {"Inbox", "Planned", "Running", "Review", "Done", "Blocked"}
 TASK_SOURCES = {"Manual", "Morning Brief", "Intelligence", "Project", "Agent Suggestion", "Yesterday Carryover"}
 DEFAULT_SETTINGS = {
@@ -53,7 +54,7 @@ RUN_LOG_LINE_LIMIT = 300
 
 
 
-class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, TracesMixin, ObsidianHomeMixin):
+class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, TracesMixin, ObsidianHomeMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,6 +88,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         self._sync_lock = threading.Lock()
         self._trace_lock = threading.Lock()
         self._recover_interrupted_runs()
+        self.split_todos()
         self.init_learning()
         self.init_summaries()
 
@@ -196,6 +198,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 "events": self.events(),
                 "today": local_day(),
                 "brief": self.brief(),
+                "today_todos": self.today_todos(),
             }
             result["runtime"] = self.runtime_status(result["settings"])
             result["history_dates"] = self.history_dates()
@@ -239,7 +242,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
 
     def log_events(self, day: str) -> list[dict[str, Any]]:
         return [event for event in self.events(day) if event["type"].startswith(
-            ("Task", "Agent", "Artifact", "Decision", "Obsidian", "DailyPlan", "ExternalRecord", "Trace"))]
+            ("Task", "Todo", "Agent", "Artifact", "Decision", "Obsidian", "DailyPlan", "ExternalRecord", "Trace"))]
 
     def log_view(self, log: dict[str, Any]) -> dict[str, Any]:
         known = set(log.get("source_event_ids", []))
@@ -256,31 +259,15 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         ).fetchone()[0]
         return bool(latest and latest > generated)
 
+    def _open_todos(self) -> list[dict[str, Any]]:
+        return [t for t in self.all("todo") if not t.get("done_at") and not t.get("archived_at")]
+
     def brief(self) -> list[dict[str, Any]]:
-        today = local_day()
-        generated = next((x for x in self.all("daily_brief") if x["date"] == today), None)
-        if generated:
-            valid = {t["id"]: t for t in self.all("task") if t["status"] in ("Inbox", "Planned") and not t.get("archived_at")}
-            choices = [{**item, "title": valid[item["task_id"]]["title"]} for item in generated["priorities"] if item["task_id"] in valid]
-            if choices:
-                return choices
-        tasks = [t for t in self.all("task") if t["status"] in ("Inbox", "Planned") and not t.get("archived_at")]
-        tasks.sort(key=lambda t: (
-            t.get("deadline") or "9999-12-31",
-            0 if t.get("priority") == "High" else 1,
-            t.get("created_at", ""),
-        ))
-        choices = []
-        for task in tasks[:3]:
-            project = self.get("project", task["project_id"]) if task.get("project_id") else None
-            decision = next((d for d in self.all("decision") if d["status"] == "Active" and d.get("project_id") == task.get("project_id")), None) if project else None
-            reason = ("截止日期临近" if task.get("deadline") and task["deadline"] <= today
-                      else "昨日遗留，适合继续推进" if task.get("planned_date") and task["planned_date"] < today
-                      else f"关联项目：{project['name']}" if project else "尚未安排，建议确认优先级")
-            if decision:
-                reason += f"；当前决策：{decision['title']}"
-            choices.append({"task_id": task["id"], "title": task["title"], "reason": reason})
-        return choices
+        generated = next((x for x in self.all("daily_brief") if x["date"] == local_day()), None)
+        if not generated:
+            return []
+        valid = {t["id"]: t for t in self._open_todos()}
+        return [{**item, "title": valid[item["todo_id"]]["title"]} for item in generated["priorities"] if item.get("todo_id") in valid]
 
     def action(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(payload, dict):
@@ -291,8 +278,6 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 "create_task": self.create_task,
                 "update_task": self.update_task,
                 "complete_task": self.complete_task,
-                "confirm_plan": self.confirm_plan,
-                "revise_plan": self.revise_plan,
                 "archive_task": self.archive_task,
                 "reopen_task": self.reopen_task,
                 "create_backup": self.create_backup,
@@ -300,7 +285,6 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 "export_data": self.export_data,
                 "sync_workbuddy": self.sync_workbuddy,
                 "propose_intelligence_knowledge": self.propose_intelligence_knowledge,
-                "add_to_today": self.add_to_today,
                 "create_decision": self.create_decision,
                 "update_decision": self.update_decision,
                 "draft_log": self.draft_log,
@@ -326,7 +310,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 "generate_project_pulse": self.generate_project_pulse,
                 "summarize_log": self.summarize_log,
         }
-        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS, *RECALL_ACTIONS, *TRACE_ACTIONS, *HOME_ACTIONS)})
+        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS, *RECALL_ACTIONS, *TRACE_ACTIONS, *HOME_ACTIONS, *TODO_ACTIONS)})
         if name not in dispatch:
             raise ValueError("未知操作")
         if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy", *TRACE_ACTIONS):
@@ -425,75 +409,6 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         self.event("TaskCompleted", "task", item["id"], item.get("project_id"), {"title": item["title"]})
         return item
 
-    def confirm_plan(self, p: dict[str, Any]) -> dict[str, Any]:
-        day = p.get("date") or local_day()
-        if day != local_day():
-            raise ValueError("只能确认今天的计划")
-        task_ids = p.get("task_ids")
-        if not isinstance(task_ids, list) or len(task_ids) != len(set(task_ids)):
-            raise ValueError("计划任务无效")
-        tasks = [self.get("task", task_id) for task_id in task_ids]
-        if any(task is None or task.get("archived_at") or task["status"] in ("Done", "Blocked") for task in tasks):
-            raise ValueError("计划包含不存在或不能安排的任务")
-        plan = next((x for x in self.all("daily_plan") if x["date"] == day), None)
-        if plan and plan.get("confirmed_at"):
-            raise ValueError("今日计划已确认")
-        for task in tasks:
-            task["planned_date"] = day
-            if task["status"] == "Inbox":
-                task["status"] = "Planned"
-            self.put("task", task)
-        plan = self.put("daily_plan", {"id": plan["id"] if plan else identifier(), "date": day, "task_ids": task_ids, "confirmed_at": stamp()})
-        self.event("DailyPlanConfirmed", "daily_plan", plan["id"], details={"task_ids": task_ids})
-        return plan
-
-    def add_to_today(self, p: dict[str, Any]) -> dict[str, Any]:
-        task = self.get("task", p.get("task_id") or "")
-        if not task or task.get("archived_at") or task["status"] in ("Done", "Blocked"):
-            raise ValueError("任务不存在或当前不能安排")
-        plan = next((x for x in self.all("daily_plan") if x["date"] == local_day() and x.get("confirmed_at")), None)
-        if not plan:
-            raise ValueError("请先确认今日计划")
-        if task["id"] not in plan["task_ids"]:
-            plan["task_ids"].append(task["id"])
-            self.put("daily_plan", plan)
-        task["planned_date"] = local_day()
-        if task["status"] == "Inbox":
-            task["status"] = "Planned"
-        task = self.put("task", task)
-        self.event("TaskAddedToToday", "task", task["id"], task.get("project_id"), {"title": task["title"]})
-        return task
-
-    def revise_plan(self, p: dict[str, Any]) -> dict[str, Any]:
-        plan = next((x for x in self.all("daily_plan") if x["date"] == local_day()), None)
-        if not plan:
-            return self.confirm_plan(p)
-        ids = p.get("task_ids")
-        if not isinstance(ids, list) or any(not isinstance(x, str) for x in ids) or len(set(ids)) != len(ids):
-            raise ValueError("计划任务无效")
-        tasks = [self.get("task", task_id) for task_id in ids]
-        if any(not task or task.get("archived_at") or (task["status"] in ("Done", "Blocked") and task["id"] not in plan["task_ids"]) for task in tasks):
-            raise ValueError("计划包含不能安排的任务")
-        removed = [self.get("task", task_id) for task_id in plan["task_ids"] if task_id not in ids]
-        if any(task and task["status"] in ("Running", "Review", "Done") for task in removed):
-            raise ValueError("执行中、待审核或已完成任务需要保留在当天记录中")
-        for task in removed:
-            if task and task.get("planned_date") == local_day():
-                task["planned_date"] = None
-                if task["status"] == "Planned":
-                    task["status"] = "Inbox"
-                self.put("task", task)
-        previous = list(plan["task_ids"])
-        for task in tasks:
-            task["planned_date"] = local_day()
-            if task["status"] == "Inbox":
-                task["status"] = "Planned"
-            self.put("task", task)
-        plan["task_ids"] = ids
-        plan = self.put("daily_plan", plan)
-        self.event("DailyPlanRevised", "daily_plan", plan["id"], details={"previous_task_ids": previous, "task_ids": ids})
-        return plan
-
     def archive_task(self, p: dict[str, Any]) -> dict[str, Any]:
         task = self._existing("task", p)
         if task["status"] in ("Running", "Review"):
@@ -571,6 +486,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             raise ValueError("备份格式不可读取，未恢复") from exc
         self.init_workspace()
         self._recover_interrupted_runs()
+        self.split_todos()
         self.init_learning()
         self.init_summaries()
         self.event("BackupRestored", details={"backup": name, "previous": previous["id"]})
@@ -611,16 +527,21 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         if day == local_day():
             self.scan_obsidian({"date": day})
         events = self.log_events(day)
-        done = [e["details"].get("title", "任务") for e in reversed(events) if e["type"] == "TaskCompleted"]
+        reopened = {e["subject_id"] for e in events if e["type"] == "TodoReopened"}
+        done = []
+        for e in reversed(events):
+            if e["type"] == "TaskCompleted":
+                done.append(e["details"].get("title", "任务"))
+            elif e["type"] == "TodoCompleted":
+                todo = self.get("todo", e["subject_id"] or "")
+                if e["subject_id"] not in reopened or (todo and (todo.get("done_at") or "")[:10] == day):
+                    done.append(e["details"].get("title", "待办"))
+        done = list(dict.fromkeys(done))
         decisions = [e["details"].get("title", "决策") for e in reversed(events) if e["type"] == "DecisionCreated"]
         artifact_names = [e["details"].get("name", "产物") for e in reversed(events) if e["type"] == "ArtifactCreated"]
         changed_notes = [e["details"].get("path", "笔记") for e in reversed(events) if e["type"] == "ObsidianFileChanged"]
-        plan = next((x for x in self.all("daily_plan") if x["date"] == day), None)
-        planned_ids = set(plan["task_ids"]) if plan else set()
-        planned = [t for t in self.all("task") if t["id"] in planned_ids or t.get("planned_date") == day]
-        unfinished = [t["title"] for t in planned if t["status"] not in ("Done", "Blocked") or (t.get("completed_at", "")[:10] > day)]
-        blocked = [t["title"] for t in planned if t["status"] == "Blocked" and t["updated_at"][:10] <= day]
-        blocked.extend(e["details"].get("title", "执行异常，请核对任务") for e in events if e["type"] in ("AgentRunFailed", "AgentRunCanceled", "AgentRunInterrupted"))
+        unfinished = [t["title"] for t in self.todos_for_day(day) if not t.get("done_at") or t["done_at"][:10] > day]
+        blocked = [e["details"].get("title", "执行异常，请核对任务") for e in events if e["type"] in ("AgentRunFailed", "AgentRunCanceled", "AgentRunInterrupted")]
         summary = "今天完成：\n" + ("\n".join(f"- {x}" for x in done) or "- 暂无")
         if decisions:
             summary += "\n\n今日决策：\n" + "\n".join(f"- {x}" for x in decisions)
@@ -1236,46 +1157,47 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
     def generate_brief(self, p: dict[str, Any]) -> dict[str, Any]:
         if not self.codex_command():
             raise ValueError("本机未找到 Codex CLI")
-        tasks = [t for t in self.all("task") if t["status"] in ("Inbox", "Planned") and not t.get("archived_at")]
-        if not tasks:
-            raise ValueError("先创建任务，才能生成建议")
+        todos = self._open_todos()
+        if not todos:
+            raise ValueError("先添加待办，才能生成建议")
+        today = local_day()
         decisions = [d for d in self.all("decision") if d["status"] == "Active"]
-        logs = sorted([log for log in self.all("daily_log") if log["date"] < local_day() and log.get("confirmed_at")], key=lambda item: item["date"], reverse=True)
+        logs = sorted([log for log in self.all("daily_log") if log["date"] < today and log.get("confirmed_at")], key=lambda item: item["date"], reverse=True)
         context = {
-            "today": local_day(),
-            "unfinished_tasks": [{"id": t["id"], "title": t["title"], "deadline": t.get("deadline"), "priority": t["priority"], "project_id": t.get("project_id")} for t in tasks[:60]],
-            "projects": [{"id": x["id"], "name": x["name"], "stage": x["stage"], "pulse": x["pulse"]} for x in self.all("project")],
+            "today": today,
+            "open_todos": [{"id": t["id"], "title": t["title"], "note": t.get("note", "")[:300], "in_today": bool(t.get("planned_date") and t["planned_date"] <= today),
+                            "planned_date": t.get("planned_date"), "project_id": t.get("project_id")} for t in todos[:60]],
+            "projects": [{"id": x["id"], "name": x["name"], "stage": x["stage"]} for x in self.all("project")],
             "active_decisions": [{"title": x["title"], "content": x["content"]} for x in decisions[:30]],
             "yesterday_log": logs[0]["summary"] if logs else "",
             "previous_log_date": logs[0]["date"] if logs else None,
-            "blocked_tasks": [{"title": t["title"], "project_id": t.get("project_id")} for t in self.all("task") if t["status"] == "Blocked" and not t.get("archived_at")],
             "intelligence": [{"title": x["title"], "why_recommended": x["why_recommended"], "source": x["source"], "source_updated_at": x.get("source_updated_at")} for x in self.intelligence_items() if x.get("feedback") != "ignore" and x.get("source_kind") != "workbuddy"][:15],
             "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"]],
         }
         prompt = (
-            "你是 Personal OS 的每日计划建议器。只根据提供的 JSON 上下文，从 unfinished_tasks 选择最多 3 项。"
-            "尊重 active_decisions。仅输出 JSON 对象，形如 {\"priorities\":[{\"task_id\":\"原始 id\",\"reason\":\"具体原因\"}]}。"
-            "不得虚构任务或完成状态。\n" + json.dumps(context, ensure_ascii=False)
+            "你是 Personal OS 的待办排序助手。只根据提供的 JSON 上下文，从 open_todos 选出今天最值得先做的最多 3 项。"
+            "尊重 active_decisions。reason 用一句简短中文说明原因，不要复述字段名或英文枚举值。"
+            "仅输出 JSON 对象，形如 {\"priorities\":[{\"todo_id\":\"原始 id\",\"reason\":\"具体原因\"}]}。"
+            "不得虚构待办或完成状态。\n" + json.dumps(context, ensure_ascii=False)
         )
         raw = self._codex_readonly(prompt)
         try:
-            parsed = json.loads(raw)
-            proposed = parsed["priorities"]
+            proposed = json.loads(raw)["priorities"]
             if not isinstance(proposed, list):
                 raise ValueError("格式无效")
-            task_index = {t["id"]: t for t in tasks}
+            index = {t["id"]: t for t in todos}
             priorities = []
             for item in proposed[:3]:
-                task = task_index.get(item.get("task_id"))
-                if task and item["task_id"] not in [x["task_id"] for x in priorities]:
-                    priorities.append({"task_id": task["id"], "title": task["title"], "reason": required_text(item.get("reason"), "建议原因", 500)})
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                todo = index.get(item.get("todo_id"))
+                if todo and todo["id"] not in [x["todo_id"] for x in priorities]:
+                    priorities.append({"todo_id": todo["id"], "title": todo["title"], "reason": required_text(item.get("reason"), "建议原因", 300)})
+        except (ValueError, KeyError, TypeError, AttributeError, json.JSONDecodeError) as exc:
             raise ValueError("Codex 返回的建议格式无效") from exc
         if not priorities:
-            raise ValueError("Codex 没有选出有效任务")
-        current = next((x for x in self.all("daily_brief") if x["date"] == local_day()), None)
-        brief = self.put("daily_brief", {"id": current["id"] if current else identifier(), "date": local_day(), "priorities": priorities, "source": "Codex"})
-        self.event("MorningBriefGenerated", "daily_brief", brief["id"], details={"task_ids": [x["task_id"] for x in priorities]})
+            raise ValueError("Codex 没有选出有效待办")
+        current = next((x for x in self.all("daily_brief") if x["date"] == today), None)
+        brief = self.put("daily_brief", {"id": current["id"] if current else identifier(), "date": today, "priorities": priorities, "source": "Codex"})
+        self.event("MorningBriefGenerated", "daily_brief", brief["id"], details={"todo_ids": [x["todo_id"] for x in priorities]})
         return brief
 
     def generate_project_pulse(self, p: dict[str, Any]) -> dict[str, Any]:

@@ -48,26 +48,27 @@ class RepairTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "新增事件"):
             self.store.action("update_log", {"id": log["id"], "summary": "checked", "acknowledge_events": True, "source_event_ids": shown["latest_source_event_ids"]})
 
-    def test_brief_revalidates_tasks_and_uses_prior_confirmed_context(self):
-        task = self.task()
+    def test_brief_revalidates_todos_and_uses_prior_confirmed_context(self):
+        todo = self.store.action("create_todo", {"title": "待办"})
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         self.store.put("daily_log", {"date": yesterday, "summary": "CONFIRMED_PREVIOUS", "confirmed_at": yesterday})
         self.store.action("draft_log", {})
         channel = self.store.action("create_channel", {"name": "test"})
         item = self.store.action("create_intelligence", {"title": "IGNORE_SENTINEL", "source": "test", "channel_id": channel["id"], "why_recommended": "test"})
         self.store.action("feedback_intelligence", {"id": item["id"], "feedback": "ignore"})
-        with patch("server.runtime.shutil.which", return_value="codex"), patch.object(self.store, "_codex_readonly", return_value=json.dumps({"priorities": [{"task_id": task["id"], "reason": "valid"}]})) as model:
+        with patch("server.runtime.shutil.which", return_value="codex"), patch.object(self.store, "_codex_readonly", return_value=json.dumps({"priorities": [{"todo_id": todo["id"], "reason": "valid"}]})) as model:
             self.store.action("generate_brief", {})
         self.assertIn("CONFIRMED_PREVIOUS", model.call_args.args[0])
         self.assertNotIn("IGNORE_SENTINEL", model.call_args.args[0])
-        self.store.action("complete_task", {"id": task["id"]})
+        self.assertEqual([item["todo_id"] for item in self.store.brief()], [todo["id"]])
+        self.store.action("toggle_todo", {"id": todo["id"]})
         self.assertEqual(self.store.brief(), [])
 
-    def test_blocked_tasks_remain_visible_in_daily_log(self):
-        task = self.task()
-        self.store.action("confirm_plan", {"task_ids": [task["id"]]})
-        self.store.put("task", {**self.store.get("task", task["id"]), "status": "Blocked"})
-        self.assertIn("阻塞与执行异常", self.store.action("draft_log", {})["summary"])
+    def test_agent_failures_remain_visible_in_daily_log(self):
+        self.store.event("AgentRunFailed", details={"title": "FAILED_SENTINEL"})
+        summary = self.store.action("draft_log", {})["summary"]
+        self.assertIn("阻塞与执行异常", summary)
+        self.assertIn("FAILED_SENTINEL", summary)
 
     def test_history_reads_beyond_recent_event_window_and_backfills(self):
         yesterday = (date.today() - timedelta(days=1)).isoformat()
@@ -128,17 +129,6 @@ class RepairTests(unittest.TestCase):
                 self.assertIn("DECISION_SENTINEL", prompts[0])
                 self.assertIn("RULE_SENTINEL", prompts[0])
 
-    def test_plan_revisions_preserve_order_and_running_work(self):
-        a, b = self.task("A"), self.task("B")
-        self.store.action("confirm_plan", {"task_ids": [a["id"], b["id"]]})
-        plan = self.store.action("revise_plan", {"task_ids": [b["id"], a["id"]]})
-        self.assertEqual(plan["task_ids"], [b["id"], a["id"]])
-        self.store.action("revise_plan", {"task_ids": [a["id"]]})
-        self.assertEqual(self.store.get("task", b["id"])["status"], "Inbox")
-        self.store.action("complete_task", {"id": a["id"]})
-        with self.assertRaises(ValueError):
-            self.store.action("revise_plan", {"task_ids": []})
-
     def test_restart_recovers_running_and_canceled_evidence_once(self):
         workspace = self.root / "workspace"
         workspace.mkdir()
@@ -188,23 +178,23 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(self.store.get("intelligence_channel", channel["id"])["last_refresh"]["errors"][0]["error"], "offline")
 
     def test_archive_reopen_and_backup_restore_preserve_recovery_copy(self):
-        task = self.task("keep")
-        self.store.action("archive_task", {"id": task["id"]})
-        self.assertEqual(self.store.brief(), [])
+        todo = self.store.action("create_todo", {"title": "keep", "today": True})
+        self.store.action("archive_todo", {"id": todo["id"]})
+        self.assertEqual(self.store.today_todos(), [])
         with self.assertRaises(ValueError):
-            self.store.action("complete_task", {"id": task["id"]})
-        self.store.action("archive_task", {"id": task["id"], "restore": True})
-        self.store.action("complete_task", {"id": task["id"]})
-        self.store.action("reopen_task", {"id": task["id"]})
+            self.store.action("toggle_todo", {"id": todo["id"]})
+        self.store.action("archive_todo", {"id": todo["id"], "restore": True})
+        self.store.action("toggle_todo", {"id": todo["id"]})
+        self.store.action("toggle_todo", {"id": todo["id"]})
         backup = self.store.action("create_backup", {})
-        later = self.task("later")
+        later = self.store.action("create_todo", {"title": "later"})
         exported = self.store.action("export_data", {})
-        self.assertEqual(len(json.loads(Path(exported["path"]).read_text())["objects"]["task"]), 2)
+        self.assertEqual(len(json.loads(Path(exported["path"]).read_text())["objects"]["todo"]), 2)
         result = self.store.action("restore_backup", {"id": backup["id"]})
-        self.assertIsNone(self.store.get("task", later["id"]))
-        self.assertIsNotNone(self.store.get("task", task["id"]))
+        self.assertIsNone(self.store.get("todo", later["id"]))
+        self.assertIsNotNone(self.store.get("todo", todo["id"]))
         self.store.action("restore_backup", {"id": result["previous_backup"]})
-        self.assertIsNotNone(self.store.get("task", later["id"]))
+        self.assertIsNotNone(self.store.get("todo", later["id"]))
         with self.assertRaises(ValueError):
             self.store.action("restore_backup", {"id": "../test.sqlite3"})
         self.store._active_jobs = 1

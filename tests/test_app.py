@@ -55,12 +55,12 @@ class MigrationTests(unittest.TestCase):
             source = Path(folder) / "old.sqlite3"
             target = Path(folder) / "application-support" / "personal-os.sqlite3"
             original = Store(source)
-            original.action("create_task", {"title": "原有任务"})
+            original.action("create_project", {"name": "原有项目"})
             self.assertTrue(migrate_legacy_database(source, target))
             migrated = Store(target)
-            self.assertEqual(migrated.all("task")[0]["title"], "原有任务")
-            migrated.action("create_task", {"title": "客户端任务"})
+            self.assertEqual(migrated.all("project")[0]["name"], "原有项目")
+            migrated.action("create_project", {"name": "客户端项目"})
             self.assertFalse(migrate_legacy_database(source, target))
-            self.assertEqual(len(migrated.all("task")), 2)
+            self.assertEqual(len(migrated.all("project")), 2)
             migrated.close()
             original.close()

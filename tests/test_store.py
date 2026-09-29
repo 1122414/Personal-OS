@@ -23,20 +23,17 @@ class StoreTests(unittest.TestCase):
 
     def test_daily_loop_persists_and_generates_from_events(self):
         project = self.store.action("create_project", {"name": "测试项目"})
-        task = self.store.action("create_task", {"title": "完成方案", "project_id": project["id"]})
+        todo = self.store.action("create_todo", {"title": "完成方案", "project_id": project["id"], "today": True})
         day = self.store.state()["today"]
-        self.assertEqual(self.store.brief()[0]["task_id"], task["id"])
-        plan = self.store.action("confirm_plan", {"task_ids": [task["id"]]})
-        self.assertEqual(plan["date"], day)
-        self.assertEqual(self.store.get("task", task["id"])["status"], "Planned")
-        self.store.action("complete_task", {"id": task["id"]})
+        self.assertEqual([item["id"] for item in self.store.state()["today_todos"]], [todo["id"]])
+        self.store.action("toggle_todo", {"id": todo["id"]})
         log = self.store.action("draft_log", {})
         self.assertIn("完成方案", log["summary"])
         self.assertEqual(self.store.action("confirm_log", {"id": log["id"]})["confirmed_at"][:10], day)
         self.assertEqual([e["type"] for e in self.store.events(day)][:2], ["DailyLogConfirmed", "DailyLogDrafted"])
         self.store.close()
         self.store = Store(self.path)
-        self.assertEqual(self.store.get("task", task["id"])["status"], "Done")
+        self.assertTrue(self.store.get("todo", todo["id"])["done_at"])
         self.assertTrue(self.store.get("daily_log", log["id"])["confirmed_at"])
 
     def test_agent_task_cannot_be_marked_done_directly(self):
@@ -44,12 +41,6 @@ class StoreTests(unittest.TestCase):
         self.store.action("update_task", {"id": task["id"], "executor_type": "agent"})
         with self.assertRaisesRegex(ValueError, "必须经过审核"):
             self.store.action("complete_task", {"id": task["id"]})
-
-    def test_plan_rejects_invalid_tasks_without_partial_changes(self):
-        task = self.store.action("create_task", {"title": "有效任务"})
-        with self.assertRaisesRegex(ValueError, "不存在"):
-            self.store.action("confirm_plan", {"task_ids": [task["id"], "missing"]})
-        self.assertEqual(self.store.get("task", task["id"])["status"], "Inbox")
 
     def test_knowledge_requires_approval_and_does_not_overwrite(self):
         vault = Path(self.temp.name) / "vault"
@@ -148,14 +139,14 @@ class StoreTests(unittest.TestCase):
         self.assertIn("仅供核对，不自动计为完成", log["summary"])
         self.assertIn("今天的笔记.md", log["summary"])
 
-    def test_generated_brief_uses_existing_task_and_active_decision(self):
+    def test_generated_brief_uses_existing_todo_and_active_decision(self):
         project = self.store.action("create_project", {"name": "项目"})
-        task = self.store.action("create_task", {"title": "完成页面", "project_id": project["id"]})
+        todo = self.store.action("create_todo", {"title": "完成页面", "project_id": project["id"]})
         self.store.action("create_decision", {"title": "优先每日闭环", "project_id": project["id"]})
-        output = '{"priorities":[{"task_id":"' + task["id"] + '","reason":"符合当前项目决策"}]}'
+        output = '{"priorities":[{"todo_id":"' + todo["id"] + '","reason":"符合当前项目决策"},{"todo_id":"missing","reason":"虚构"}]}'
         with patch("server.runtime.shutil.which", return_value="/usr/bin/codex"), patch.object(self.store, "_codex_readonly", return_value=output) as model:
             brief = self.store.action("generate_brief", {})
-        self.assertEqual(brief["priorities"][0]["task_id"], task["id"])
+        self.assertEqual([item["todo_id"] for item in brief["priorities"]], [todo["id"]])
         self.assertIn("优先每日闭环", model.call_args.args[0])
 
     def test_channel_refresh_filters_and_deduplicates(self):

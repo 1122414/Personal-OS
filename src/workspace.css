@@ -11,7 +11,7 @@
 .home-capture .capture-actions{margin-top:0}
 .home-capture .capture-attachments,.home-capture .inline-error{flex-basis:100%;order:3}
 .home-grid .panel-heading small{font-size:11px;color:var(--muted)}
-.home-grid{flex:1;min-height:454px;display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);grid-template-rows:minmax(220px,1fr) minmax(220px,1fr);grid-template-areas:"today side" "last side";gap:14px}
+.home-grid{flex:1;min-height:454px;display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);grid-template-rows:minmax(240px,1.3fr) minmax(200px,1fr);grid-template-areas:"today side" "last side";gap:14px}
 .home-grid>.today-plan{grid-area:today}
 .home-grid>.last-work,.home-grid>.repo-onboarding{grid-area:last}
 .home-grid .panel{padding:18px 22px;border-radius:13px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
@@ -176,3 +176,28 @@
 .run-log{white-space:pre-wrap;word-break:break-all;font:11px/1.55 Menlo,monospace;max-height:240px;overflow:auto;margin:6px 0 0;padding:8px 10px;background:var(--surface);border:1px solid var(--border);border-radius:7px}
 @media(max-width:1100px){.board-split{grid-template-columns:1fr}}
 .theme-afternoon .run-Failed,.theme-afternoon .run-Interrupted,.theme-night .run-Failed,.theme-night .run-Interrupted{color:#ff8e9c}.theme-afternoon .run-Finished{color:#8ad8b8}.theme-night .run-Finished{color:#75d8b6}
+.todo-toolbar{display:flex;gap:10px;align-items:center;margin-bottom:8px;flex:none}
+.todo-toolbar .todo-add{flex:1;min-width:0}
+.todo-add input{width:100%;font-size:13px;padding:8px 10px}
+.todo-toolbar select{width:auto;max-width:42%;font-size:12px}
+.todo-suggest{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 6px;font-size:12px;flex:none}
+.todo-suggest button{border:1px solid var(--border);background:var(--accent-soft);color:var(--ink);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer}
+.todo-row{display:flex;align-items:flex-start;gap:11px;padding:9px 4px;border-bottom:1px solid var(--border)}
+.todo-row:last-child{border-bottom:0}
+.todo-check{background:transparent;cursor:pointer;padding:0;margin-top:3px}
+.todo-text{flex:1;min-width:0}
+.todo-title{background:none;border:0;padding:0;color:var(--ink);font-size:14px;font-weight:600;text-align:left;cursor:pointer;line-height:1.45}
+.todo-row.done .todo-title{color:var(--muted);text-decoration:line-through}
+.todo-carry{margin-left:8px;font-size:11px;color:var(--accent);border:1px solid currentColor;border-radius:999px;padding:0 7px;white-space:nowrap}
+.todo-text p{margin:3px 0 0;font-size:12px;color:var(--muted);line-height:1.6;white-space:pre-line;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.todo-actions{display:flex;align-items:center;gap:8px;flex:none}
+.todos-page{flex:1;min-height:0;display:flex;flex-direction:column}
+.todo-columns{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.todo-columns .panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.todo-columns .panel-body{flex:1 1 0;min-height:0;overflow:auto}
+.todo-columns .todo-add{margin-bottom:8px;flex:none}
+.todo-archived{margin-top:12px}
+.todo-archived summary{cursor:pointer;font-size:12px;color:var(--muted)}
+@media(max-width:900px),(max-height:700px){.todo-columns{grid-template-columns:1fr}.todo-columns .panel{overflow:visible}.todo-columns .panel-body{max-height:360px;flex:none}.todos-page{overflow:auto}}
+.button.compact{min-height:28px;padding:4px 11px;font-size:12px;white-space:nowrap}
+.today-plan .panel-heading{gap:10px;flex-wrap:wrap}

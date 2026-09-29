@@ -212,13 +212,6 @@ def daily_automation(store: Store, stop: threading.Event) -> None:
                 for channel in store.all("intelligence_channel"):
                     if channel["id"] not in refreshed and channel.get("sources"):
                         store.action("refresh_channel", {"id": channel["id"]})
-                attempted = any(event["type"] in ("MorningBriefGenerated", "MorningBriefFailed") for event in store.events(day))
-                pending = any(task["status"] not in ("Done", "Blocked") for task in store.all("task"))
-                if pending and not attempted and not any(brief["date"] == day for brief in store.all("daily_brief")):
-                    try:
-                        store.action("generate_brief", {})
-                    except ValueError as exc:
-                        store.event("MorningBriefFailed", details={"error": str(exc)[:200]})
                 pulse_attempts = {event["subject_id"] for event in store.events(day) if event["type"] in ("ProjectPulseGenerated", "ProjectPulseFailed")}
                 for project in store.all("project"):
                     has_tasks = any(task.get("project_id") == project["id"] for task in store.all("task"))

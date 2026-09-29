@@ -3,6 +3,7 @@ import useWorkspaceData from './useWorkspaceData.js'
 import { Button, Field, Icon, Modal, NAV } from './ui.jsx'
 import Home from './pages/Home.jsx'
 import Tasks from './pages/Tasks.jsx'
+import Todos from './pages/Todos.jsx'
 import Projects from './pages/Projects.jsx'
 import Intelligence from './pages/Intelligence.jsx'
 import Review from './pages/Review.jsx'
@@ -23,7 +24,7 @@ function initialPage() {
 }
 
 const pageTitles = {
-  today: '早上好', records: '记录', learning: '学习', tasks: '任务', projects: '项目', intelligence: 'AI 日报',
+  today: '早上好', records: '记录', todos: '待办', learning: '学习', tasks: '任务', projects: '项目', intelligence: 'AI 日报',
   review: '审核', history: '历史', settings: '设置',
 }
 
@@ -43,7 +44,7 @@ function FormModal({ modal, data, run, close }) {
   const kind = modal.kind
   const editing = kind.endsWith('-edit')
   const names = {
-    task: '新建任务', 'task-edit': '编辑任务', project: '新建项目', 'project-edit': '编辑项目',
+    task: '新建任务', 'task-edit': '编辑任务', 'todo-edit': '编辑待办', project: '新建项目', 'project-edit': '编辑项目',
     decision: '记录决策', 'decision-edit': '编辑决策', pulse: '编辑项目脉搏',
     'log-edit': '修改日报', channel: '新建频道', 'channel-edit': '编辑频道', intelligence: '添加情报',
     rule: '新建规则', 'rule-edit': '编辑规则', knowledge: '提出知识沉淀',
@@ -59,6 +60,8 @@ function FormModal({ modal, data, run, close }) {
       operation = editing ? 'update_task' : 'create_task'
       const { executor, ...fields } = values
       payload = { ...fields, executor_type: executor === 'self' ? 'self' : 'agent', ...(executor === 'self' ? {} : { runtime: executor }), intelligence_id: item.intelligence_id || null, project_id: values.project_id || null, deadline: values.deadline || null, ...(editing ? { id: item.id } : {}) }
+    } else if (kind === 'todo-edit') {
+      operation = 'update_todo'; payload = { id: item.id, title: values.title, note: values.note, project_id: values.project_id || null }
     } else if (kind === 'project' || kind === 'project-edit') {
       operation = editing ? 'update_project' : 'create_project'
       if (editing) payload.id = item.id
@@ -94,6 +97,12 @@ function FormModal({ modal, data, run, close }) {
       <div className="form-columns"><Field label="所属项目"><select name="project_id" defaultValue={item.project_id || ''}><option value="">无项目</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field><Field label="优先级"><select name="priority" defaultValue={item.priority || 'Medium'}><option value="High">高</option><option value="Medium">中</option><option value="Low">低</option></select></Field></div>
       <div className="form-columns"><Field label="截止日期"><input type="date" name="deadline" defaultValue={item.deadline || ''} /></Field><Field label="执行方式"><select name="executor" defaultValue={item.executor_type === 'agent' ? item.runtime || 'codex' : 'self'}><option value="self">我自己</option>{(data.runtime?.agents || []).map(agent => <option key={agent.id} value={agent.id}>{agent.label}{agent.available ? '' : '（本机未找到）'}</option>)}</select></Field></div>
       {!editing && <input type="hidden" name="source" value={item.source || 'Manual'} />}
+    </>}
+    {kind === 'todo-edit' && <>
+      <Field label="待办"><input name="title" defaultValue={item.title} required autoFocus maxLength={200} /></Field>
+      <Field label="备注"><textarea name="note" defaultValue={item.note || ''} rows={4} maxLength={2000} /></Field>
+      <Field label="关联项目（可选）"><select name="project_id" defaultValue={item.project_id || ''}><option value="">无</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>
+      {item.home_item_note && <p className="muted">来自长线事项：{item.home_item_note}</p>}
     </>}
     {(kind === 'project' || kind === 'project-edit') && <><Field label="项目名称"><input name="name" defaultValue={item.name || ''} required autoFocus /></Field><Field label="项目说明"><textarea name="description" rows={3} defaultValue={item.description || ''} /></Field><Field label="当前阶段"><input name="stage" defaultValue={item.stage || '规划中'} /></Field>{editing && <Field label="状态"><select name="status" defaultValue={item.status}><option value="Active">进行中</option><option value="Paused">已暂停</option><option value="Completed">已完成</option></select></Field>}<Field label="本地工作目录（派给 Agent 执行时使用，可选）"><input name="workspace_path" defaultValue={item.workspace_path || ''} placeholder="/path/to/repository" /></Field></>}
     {(kind === 'decision' || kind === 'decision-edit') && <><Field label="决策标题"><input name="title" defaultValue={item.title || ''} required autoFocus /></Field><Field label="决定内容"><textarea name="content" rows={4} defaultValue={item.content || ''} required /></Field><Field label="原因"><textarea name="reason" rows={2} defaultValue={item.reason || ''} /></Field>{!editing && <Field label="所属项目"><select name="project_id" defaultValue={item.project_id || ''}><option value="">无项目</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>}{editing && <Field label="状态"><select name="status" defaultValue={item.status}><option value="Active">有效</option><option value="Superseded">已替代</option><option value="Archived">已归档</option></select></Field>}</>}
@@ -153,9 +162,14 @@ export default function App() {
     }
   }
 
+  async function addTodo() {
+    if (search.trim() && await run('create_todo', { title: search.slice(0, 200) })) { setSearch(''); navigate('todos') }
+  }
+
   const matches = useMemo(() => !search.trim() || !data ? [] : [
     ...(data.records || []).filter(item => `${item.title} ${item.content}`.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'records', label: '记录' })),
     ...(data.learning_topics || []).filter(item => `${item.title} ${item.goal}`.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'learning', label: '学习' })),
+    ...data.todos.filter(item => !item.archived_at && item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'todos', label: '待办' })),
     ...data.tasks.filter(item => item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'tasks', label: '任务' })),
     ...data.projects.filter(item => item.name.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'projects', title: item.name, label: '项目' })),
   ], [search, data])
@@ -163,12 +177,13 @@ export default function App() {
   const transparency = previewTransparency ?? settings.theme_transparency ?? 8
   return <div className={`app-shell theme-${theme} ${page === 'today' ? 'workspace-home' : ''} ${page === 'learning' && focus ? 'workspace-topic' : ''}`} style={{ '--surface-alpha': (100 - transparency) / 100 }}>
     <aside className="sidebar"><div className="brand"><div className="brand-mark">♆</div><div><strong>Personal OS</strong><small>ABYSS CALLS · BUT ALSO HEALS</small></div></div><nav aria-label="主导航">{NAV.map(([key, label, english]) => <button key={key} aria-label={label} className={`nav-item ${page === key ? 'active' : ''} ${key === 'settings' ? 'settings-nav' : ''}`} onClick={() => navigate(key)}><span className="nav-icon"><Icon name={key} /></span><span>{label}<small>{english}</small></span></button>)}</nav><div className="sidebar-quote"><span>✧</span><p>在混沌中，仍然前行。</p><small>PERSONAL OS · A MORE FOCUSED YOU</small></div></aside>
-    <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else open('task', { title: search }) } }} placeholder="搜索记录、主题、任务…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={() => open('task', { title: search })}><small>新建</small>创建任务：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
+    <div className="main-area"><header className="topbar"><div className="command-wrap"><label className="command-bar"><span>⌕</span><input id="global-command" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); if (matches[0]) navigate(matches[0].page, matches[0].id); else addTodo() } }} placeholder="搜索记录、待办、任务…" /><kbd>⌘ K</kbd></label>{search && <div className="search-popover">{matches.map(item => <button key={item.id} onClick={() => navigate(item.page, item.id)}><small>{item.label}</small>{item.title}</button>)}<button onClick={addTodo}><small>新建</small>加入待办：{search}</button></div>}</div><div className="topbar-right"><span className="topbar-theme">{theme === 'morning' ? '☼' : theme === 'afternoon' ? '✦' : '☾'}</span><button className="avatar" onClick={() => navigate('settings')} aria-label="打开设置">✧</button><span className="topbar-name">{nickname || 'Personal OS'}</span></div></header>
       <div className="hero"><div className="hero-copy"><span className="hero-kicker">{page === 'today' ? '' : page.toUpperCase()}</span><div className="hero-line"><h1>{page === 'today' ? <>{greeting()}{nickname ? `，${nickname}` : ''}。</> : pageTitles[page]}</h1>{page === 'today' && data && <StateChip data={data} run={run} />}</div><p>{page === 'today' ? '先记下来，再继续一件重要的事。' : '让每一步工作都有来处，也有归处。'}</p></div></div>
       <main className="content" ref={content}>{loading ? <div className="loading">正在读取工作空间…</div> : !data ? <div className="loading">无法连接本地服务。请启动 Python API。</div> : <>
         {page === 'today' && <Home data={data} run={run} open={open} navigate={navigate} refresh={refresh} />}
-        {page === 'records' && <Records data={data} run={run} focus={focus} navigate={navigate} />}
+        {page === 'records' && <Records data={data} run={run} focus={focus} navigate={navigate} open={open} />}
         {page === 'learning' && <Learning data={data} run={run} focus={focus} navigate={navigate} />}
+        {page === 'todos' && <Todos data={data} run={run} open={open} />}
         {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}
         {page === 'projects' && <Projects data={data} run={run} open={open} focus={focus} navigate={navigate} />}
         {page === 'intelligence' && <Intelligence data={data} run={run} open={open} focus={focus} refresh={refresh} navigate={navigate} />}

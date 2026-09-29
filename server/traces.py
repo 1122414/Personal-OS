@@ -421,7 +421,7 @@ class TracesMixin:
     def last_work(self) -> dict[str, Any] | None:
         row = self.db.execute(
             "SELECT max(substr(created_at,1,10)) FROM activity WHERE substr(created_at,1,10) < ? AND "
-            "((type LIKE 'Trace%' AND project_id IS NOT NULL) OR type LIKE 'Task%' OR type LIKE 'Agent%')", (local_day(),),
+            "((type LIKE 'Trace%' AND project_id IS NOT NULL) OR type LIKE 'Task%' OR type = 'TodoCompleted' OR type LIKE 'Agent%')", (local_day(),),
         ).fetchone()
         day = row[0] if row else None
         if not day:
@@ -431,9 +431,9 @@ class TracesMixin:
         unassigned = []
         for event in reversed(self.events(day)):
             kind, details = event["type"], event["details"]
-            if kind not in (*TRACE_TYPES, "TaskCompleted"):
+            if kind not in (*TRACE_TYPES, "TaskCompleted", "TodoCompleted"):
                 continue
-            entry = {"id": event["id"], "at": event["created_at"], **details}
+            entry = {"id": event["id"], "at": event["created_at"], "kind": kind, **details}
             project_id = event.get("project_id")
             if kind == "TraceSession" and not project_id:
                 unassigned.append(entry)

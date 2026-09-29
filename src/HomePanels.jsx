@@ -45,9 +45,9 @@ export function LastWork({ data, run }) {
   </Panel>
   return <Panel title="上次工作" action={tools} className="last-work"><div className="trace-list">
     {work.groups.map((group, index) => <details key={group.project_id || 'none'} open={index < 2} className="trace-group">
-      <summary><strong>{group.name}</strong><small>{[group.commits.length && `${group.commits.length} 次提交`, group.sessions.length && `${group.sessions.length} 段会话`, group.tasks.length && `完成 ${group.tasks.length} 项任务`].filter(Boolean).join(' · ')}</small></summary>
+      <summary><strong>{group.name}</strong><small>{[group.commits.length && `${group.commits.length} 次提交`, group.sessions.length && `${group.sessions.length} 段会话`, group.tasks.length && `完成 ${group.tasks.length} 项`].filter(Boolean).join(' · ')}</small></summary>
       <ul>
-        {group.tasks.map(item => <li className="trace-row" key={item.id}><span className="trace-kind">任务</span><div><strong>{item.title}</strong><small>{timeLabel(item.at)}</small></div></li>)}
+        {group.tasks.map(item => <li className="trace-row" key={item.id}><span className="trace-kind">{item.kind === 'TodoCompleted' ? '待办' : '任务'}</span><div><strong>{item.title}</strong><small>{timeLabel(item.at)}</small></div></li>)}
         {group.sessions.map(item => <SessionRow key={item.id} item={item} onReveal={reveal} />)}
         {group.commits.map(item => <li className="trace-row" key={item.id} title={item.ref}><span className="trace-kind">提交</span><div><strong>{item.title}</strong><small>{timeLabel(item.at)} · <button className="trace-source" title="查看提交内容" onClick={() => open('show_commit', item)}>{item.ref?.slice(0, 7)}</button></small></div></li>)}
       </ul>

@@ -4,6 +4,7 @@ const ICONS = {
   today: <><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9v12h14V9" /><path d="M10 21v-6h4v6" /></>,
   records: <><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" /><path d="M18.4 2.6a2 2 0 0 1 2.9 2.9L12 14.8 8 16l1.2-4z" /></>,
   learning: <><path d="M2 5h6a4 4 0 0 1 4 4v11a3 3 0 0 0-3-3H2z" /><path d="M22 5h-6a4 4 0 0 0-4 4v11a3 3 0 0 1 3-3h7z" /></>,
+  todos: <><path d="M9 6h11M9 12h11M9 18h11" /><path d="m3.5 6 1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17" /></>,
   tasks: <><rect x="3" y="3" width="18" height="18" rx="3" /><path d="m8 12 3 3 5-6" /></>,
   projects: <><path d="m12 3 9 5-9 5-9-5z" /><path d="m3 13 9 5 9-5" /></>,
   intelligence: <><path d="M4 5h12v14a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2z" /><path d="M16 9h4v10a2 2 0 0 1-2 2" /><path d="M8 9h4M8 13h4M8 17h2" /></>,
@@ -19,6 +20,7 @@ export function Icon({ name }) {
 export const NAV = [
   ['today', '首页', 'Today'],
   ['records', '记录', 'Records'],
+  ['todos', '待办', 'To-dos'],
   ['tasks', '任务', 'Tasks'],
   ['projects', '项目', 'Projects'],
   ['intelligence', 'AI 日报', 'Reports'],

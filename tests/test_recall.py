@@ -80,8 +80,7 @@ class RecallTests(unittest.TestCase):
         self.assertEqual(1, len(self.store.all('record')))
 
     def test_current_state_context_overrides_expired_history_without_editing_plan(self):
-        task = self.store.action('create_task', {'title': '继续阅读'})
-        plan = self.store.action('confirm_plan', {'task_ids': [task['id']]})
+        todo = self.store.action('create_todo', {'title': '继续阅读', 'today': True})
         state = self.state(pace='rest', avoid_new_projects=True)
         prompt = self.store._learning_prompt(self.topic, {'id': 'test', 'content': '继续', 'sources': []}, False)
         self.assertIn('rest', prompt)
@@ -92,7 +91,7 @@ class RecallTests(unittest.TestCase):
             after = self.store.learning_state_context()
         self.assertEqual([], after['states'])
         self.assertFalse(after['avoid_new_projects'])
-        self.assertEqual(plan, self.store.get('daily_plan', plan['id']))
+        self.assertEqual(todo, self.store.get('todo', todo['id']))
 
     def test_related_reasons_are_grounded_and_no_noise_fill(self):
         old = self.record()
