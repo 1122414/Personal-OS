@@ -1124,6 +1124,8 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 run["log_tail"] = log_tail
             if run and outcome.external_id:
                 run["external_id"] = outcome.external_id
+            if run and outcome.outside_writes:
+                run["outside_writes"] = outcome.outside_writes
             if not run or run["status"] != "Running":
                 if run:
                     self.put("agent_run", run)

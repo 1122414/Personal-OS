@@ -18,7 +18,7 @@ from server.store import Store
 class FakeRuntime(Runtime):
     id, label, binary = "fake", "假通道", "fake-agent"
 
-    def command(self, executable, workspace, output):
+    def command(self, executable, workspace, output, prompt):
         return [executable, "--cwd", str(workspace)]
 
     def progress(self, line, state):
@@ -174,7 +174,7 @@ class RuntimeTests(unittest.TestCase):
         class Shell(Runtime):
             id, label = "shell", "Shell"
 
-            def command(self, executable, workspace, output):
+            def command(self, executable, workspace, output, prompt):
                 return [executable, "-c", "sleep 30 & echo $!; wait"]
 
             def progress(self, line, state):
@@ -202,6 +202,140 @@ class RuntimeTests(unittest.TestCase):
             time.sleep(0.02)
         else:
             self.fail("子进程仍在运行")
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def feed(runtime, workspace, text):
+    state, logs = {"workspace": Path(workspace).resolve()}, []
+    for line in text.splitlines(True):
+        log = runtime.progress(line, state)
+        if log:
+            logs.append(log)
+    return state, logs
+
+
+class DirectRuntimeTests(unittest.TestCase):
+    """Kimi samples and the Claude Code error sample are real output recorded in /tmp trial runs."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self.temp.name)
+        self.addCleanup(self.temp.cleanup)
+
+    def test_kimi_sample_yields_session_log_and_result(self):
+        state, logs = feed(RUNTIMES["kimi"], self.workspace, (FIXTURES / "kimi-stream-success.jsonl").read_text())
+        self.assertTrue(state["external_id"].startswith("session_"))
+        self.assertEqual(state["result"], "已在当前目录创建 hello.txt，内容为 hi 一行。")
+        self.assertIn("Write hello.txt", logs)
+        self.assertNotIn("outside_writes", state)
+
+    def test_kimi_write_outside_workspace_is_flagged_even_when_blocked(self):
+        state, logs = feed(RUNTIMES["kimi"], self.workspace, (FIXTURES / "kimi-stream-outside-blocked.jsonl").read_text())
+        self.assertEqual(state["outside_writes"], [str(Path("/tmp/pos-trial/outside/escape.txt").resolve())])
+        self.assertIn("↳ write failed: permission denied", logs)
+
+    def test_claude_error_result_fails_even_with_success_subtype(self):
+        state, logs = feed(RUNTIMES["claude"], self.workspace, (FIXTURES / "claude-stream-api-error.jsonl").read_text())
+        self.assertIn("余额不足", state["error"])
+        self.assertEqual(state["external_id"], "b0de6e1a-d9de-4595-a0e5-353f37cbb1c3")
+        self.assertEqual(logs[:2], ["已启动 · glm-5.2", "接口重试 1/10（429）"])
+
+    def test_claude_tool_use_is_logged_and_outside_edits_flagged(self):
+        # Hand-written from the documented stream-json shape; not yet seen from a real successful run.
+        outside = str(Path("/tmp/elsewhere.txt").resolve())
+        sample = lines(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "先写文件"},
+                                                           {"type": "tool_use", "name": "Write", "input": {"file_path": str(self.workspace / "a.txt")}}]}},
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit", "input": {"file_path": "/tmp/elsewhere.txt"}},
+                                                           {"type": "tool_use", "name": "Bash", "input": {"command": "npm test"}}]}},
+            {"type": "result", "subtype": "success", "is_error": False, "result": "完成", "session_id": "s-2"},
+        )
+        state, logs = feed(RUNTIMES["claude"], self.workspace, sample)
+        self.assertEqual((state["result"], state["external_id"], state["outside_writes"]), ("完成", "s-2", [outside]))
+        self.assertEqual(logs[1], "Edit /tmp/elsewhere.txt · Bash npm test")
+        self.assertNotIn("error", state)
+
+
+class SandboxedRunTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.workspace = self.root / "workspace"
+        self.workspace.mkdir()
+        self.store = Store(self.root / "test.sqlite3")
+        project = self.store.action("create_project", {"name": "项目", "workspace_path": str(self.workspace)})
+        self.task = self.store.action("create_task", {"title": "派给 Kimi", "project_id": project["id"], "executor_type": "agent", "runtime": "kimi"})
+        self.sandbox = self.root / "sandbox-exec"
+        self.sandbox.write_text("")
+        for patcher in (patch("server.runtime.shutil.which", return_value="/bin/kimi"), patch("server.runtime.SANDBOX_EXEC", str(self.sandbox))):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        self.store.close()
+        self.temp.cleanup()
+
+    def wait_run(self, run_id):
+        for _ in range(300):
+            run = self.store.get("agent_run", run_id)
+            if run["status"] != "Running" and run_id not in self.store._workers:
+                return run
+            time.sleep(0.01)
+        self.fail("执行未结束")
+
+    def test_kimi_runs_inside_sandbox_with_prompt_argument_and_records_outside_writes(self):
+        seen = {}
+        sample = (FIXTURES / "kimi-stream-outside-blocked.jsonl").read_text()
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                seen.update(command=self.command, stdin=prompt)
+                return sample, "", 0
+
+        with patch("server.runtime.subprocess.Popen", Process):
+            run = self.wait_run(self.store.action("start_agent", {"task_id": self.task["id"]})["id"])
+        command = seen["command"]
+        self.assertEqual(command[:2], [str(self.sandbox), "-p"])
+        self.assertIn(f'(subpath "{self.workspace.resolve()}")', command[2])
+        self.assertIn("deny file-write*", command[2])
+        self.assertEqual(command[3:7], ["/bin/kimi", "--output-format", "stream-json", "-p"])
+        self.assertIn("任务：派给 Kimi", command[7])
+        self.assertEqual(seen["stdin"], "")
+        self.assertEqual((run["status"], run["runtime"], run["agent_id"]), ("Finished", "kimi", "Kimi"))
+        self.assertEqual(run["outside_writes"], [str(Path("/tmp/pos-trial/outside/escape.txt").resolve())])
+        self.assertTrue(run["external_id"].startswith("session_"))
+
+    def test_missing_sandbox_refuses_to_run_unconfined(self):
+        self.sandbox.unlink()
+        with patch("server.runtime.subprocess.Popen") as popen:
+            run = self.wait_run(self.store.action("start_agent", {"task_id": self.task["id"]})["id"])
+        popen.assert_not_called()
+        self.assertEqual(run["status"], "Failed")
+        self.assertIn("已拒绝执行", run["error"])
+
+
+@unittest.skipUnless(Path("/usr/bin/sandbox-exec").is_file(), "needs macOS sandbox-exec")
+class RealSandboxTests(unittest.TestCase):
+    def test_profile_allows_workspace_and_denies_other_writes(self):
+        class Shell(Runtime):
+            id, label = "shell", "Shell"
+            state_paths, prompt_in_argv = [], True
+
+            def command(self, executable, workspace, output, prompt):
+                return [executable, "-c", prompt]
+
+        probe = Path.home() / ".pos-escape-probe"
+        self.addCleanup(probe.unlink, missing_ok=True)
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory(dir=Path.home()) as outside:
+            script = f"echo in > inside.txt; echo out > '{outside}/escape.txt'; echo home > \"$HOME/.pos-escape-probe\""
+            outcome = execute(Shell(), "/bin/sh", script, Path(workspace), lambda p: None, lambda text: None)
+            self.assertTrue((Path(workspace) / "inside.txt").exists())
+            self.assertFalse((Path(outside) / "escape.txt").exists())
+            self.assertFalse(probe.exists())
+            self.assertFalse(outcome.succeeded)
+            self.assertIn("Operation not permitted", outcome.error)
 
 
 if __name__ == "__main__":
