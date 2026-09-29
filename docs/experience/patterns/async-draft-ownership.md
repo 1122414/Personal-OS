@@ -12,7 +12,7 @@ Keep text, selected material IDs, request IDs and draft revisions at the keyed t
 
 The browser reproduced the old “type → materials → chat → empty input” path on 2026-09-29. After the repair, “chat → materials → summary → chat” retained both the question and its selected material. Deterministic cases in [learning-state.test.js](../../../tests/frontend/learning-state.test.js) cover successful/failed sends, edits while waiting, changes away and back, unlinking selected materials, reversed response order, obsolete errors and stopped/restarted loaders.
 
-Verification: unit scenarios and the tab-switch UI path verified once. Browser delayed-send and failure-retry checks were interrupted and then blocked during browser restoration; do not infer those UI paths passed from reducer tests alone. This pattern is applied to the learning workspace, not to every other async editor in the application.
+Verification: unit scenarios and the tab-switch UI path verified once. The resumed in-app browser check on 2026-09-29 held a successful send response, entered a second question, and verified the second question survived. A simulated HTTP 503 retained that input; retry produced one saved question and then cleared the composer. Page identity, screenshot, DOM and console checks passed with fixed offline Agent replies. The earlier browser restoration blocker is resolved. This pattern is applied to the learning workspace, not to every other async editor in the application.
 
 ## Applicability limits
 
