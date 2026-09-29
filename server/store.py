@@ -22,6 +22,7 @@ from .learning import LearningMixin, LEARNING_KINDS, LEARNING_ACTIONS, PRIVATE_K
 from .learning_summary import LearningSummaryMixin, SUMMARY_KINDS, SUMMARY_ACTIONS, SUMMARY_PRIVATE
 from .recall import RecallMixin, RECALL_KINDS, RECALL_ACTIONS
 from .traces import TracesMixin, TRACE_KINDS, TRACE_ACTIONS
+from .obsidian_home import ObsidianHomeMixin, HOME_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
@@ -45,7 +46,7 @@ DEFAULT_SETTINGS = {
 
 
 
-class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, TracesMixin):
+class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, TracesMixin, ObsidianHomeMixin):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -194,6 +195,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             result["personal_states"] = [self.personal_state_view(item) for item in result["personal_states"]]
             result["weekly_review"] = self.weekly_review_view()
             result["last_work"] = self.last_work()
+            result["home_items"] = self.home_items()
             result["trace_sync"] = {k: v for k, v in self._trace_state().items() if k != "files"}
             summaries = {item["topic_id"]: item for item in self.all("learning_summary")}
             result["learning_topics"] = [{**topic, "brief": summaries.get(topic["id"], {}).get("sections", {}).get("brief", {}).get("body", ""),
@@ -311,7 +313,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 "generate_project_pulse": self.generate_project_pulse,
                 "summarize_log": self.summarize_log,
         }
-        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS, *RECALL_ACTIONS, *TRACE_ACTIONS)})
+        dispatch.update({operation: getattr(self, operation) for operation in (*WORKSPACE_ACTIONS, *LEARNING_ACTIONS, *SUMMARY_ACTIONS, *RECALL_ACTIONS, *TRACE_ACTIONS, *HOME_ACTIONS)})
         if name not in dispatch:
             raise ValueError("未知操作")
         if name in ("refresh_channel", "generate_brief", "generate_project_pulse", "summarize_log", "sync_workbuddy", *TRACE_ACTIONS):
