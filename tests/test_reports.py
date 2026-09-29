@@ -129,6 +129,6 @@ class ReportTests(unittest.TestCase):
     def test_workbuddy_conversations_are_not_ai_brief_context(self):
         task = self.store.action('create_task', {'title': 'real task'})
         self.store.put('intelligence_item', {'title': 'CONVERSATION_NOISE', 'source_kind': 'workbuddy', 'source': 'WorkBuddy', 'why_recommended': 'session'})
-        with patch('server.store.shutil.which', return_value='codex'), patch.object(self.store, '_codex_readonly', return_value=json.dumps({'priorities': [{'task_id': task['id'], 'reason': 'test'}]})) as model:
+        with patch('server.runtime.shutil.which', return_value='codex'), patch.object(self.store, '_codex_readonly', return_value=json.dumps({'priorities': [{'task_id': task['id'], 'reason': 'test'}]})) as model:
             self.store.action('generate_brief', {})
         self.assertNotIn('CONVERSATION_NOISE', model.call_args.args[0])

@@ -181,7 +181,7 @@ class LearningSummaryMixin:
             if kind == "message":
                 messages[value["id"]] = value["text"]
         with tempfile.TemporaryDirectory(prefix="personal-os-summary-") as folder:
-            CodexLearningSession(Path(folder), cancel, receive).run(prompt, output_schema=response_schema(), ephemeral=True)
+            CodexLearningSession(Path(folder), cancel, receive, executable=self.codex_command()).run(prompt, output_schema=response_schema(), ephemeral=True)
         if not messages:
             raise ValueError("总结任务没有返回正文")
         try:

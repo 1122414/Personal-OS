@@ -38,7 +38,7 @@ class LearningTests(unittest.TestCase):
     @staticmethod
     def successful(captured):
         class Runtime:
-            def __init__(self, cwd, cancel, notify):
+            def __init__(self, cwd, cancel, notify, **_kwargs):
                 self.notify = notify
             def run(self, prompt, native_session_id=None, images=()):
                 captured.append({"prompt": prompt, "session": native_session_id, "images": list(images)})
@@ -69,7 +69,7 @@ class LearningTests(unittest.TestCase):
 
     def test_A05_question_and_partial_response_survive_failure_and_retry(self):
         class Failed:
-            def __init__(self, cwd, cancel, notify): self.notify = notify
+            def __init__(self, cwd, cancel, notify, **_kwargs): self.notify = notify
             def run(self, *args, **kwargs):
                 self.notify("delta", {"id": "part", "text": "尚未完成的解释"})
                 raise ValueError("模拟连接中断")
@@ -90,7 +90,7 @@ class LearningTests(unittest.TestCase):
     def test_A05_cancel_preserves_partial_text_and_rejects_parallel_turn(self):
         entered = threading.Event()
         class Waiting:
-            def __init__(self, cwd, cancel, notify): self.cancel, self.notify = cancel, notify
+            def __init__(self, cwd, cancel, notify, **_kwargs): self.cancel, self.notify = cancel, notify
             def run(self, *args, **kwargs):
                 self.notify("delta", {"id": "part", "text": "部分回答"})
                 entered.set()
@@ -156,7 +156,7 @@ class LearningTests(unittest.TestCase):
         material = self.store.action("add_material", {"record_id": record["id"], "name": "image.png", "base64": base64.b64encode(body).decode()})
         captured = []
         class Unsupported:
-            def __init__(self, cwd, cancel, notify): pass
+            def __init__(self, cwd, cancel, notify, **_kwargs): pass
             def run(self, prompt, native_session_id=None, images=()):
                 captured.extend(path.read_bytes() for path in images)
                 raise ValueError("当前模型不支持图像")

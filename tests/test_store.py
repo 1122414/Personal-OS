@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from agent_fakes import FakeAgentProcess
 from server.store import Store
 
 
@@ -84,17 +85,15 @@ class StoreTests(unittest.TestCase):
         self.store.action("update_project", {"id": project["id"], "workspace_path": str(workspace)})
         task = self.store.action("create_task", {"title": "实现功能", "project_id": project["id"], "executor_type": "agent"})
 
-        class FakeProcess:
-            returncode = 0
-            def __init__(self, command, **kwargs):
-                self.output = Path(command[command.index("-o") + 1])
-                self.workspace = Path(command[command.index("-C") + 1])
-            def communicate(self, prompt, timeout):
-                (self.workspace / "hello.txt").write_text("验收产物", encoding="utf-8")
-                self.output.write_text("已完成实现与验证", encoding="utf-8")
-                return "", ""
+        class FakeProcess(FakeAgentProcess):
+            def behave(self, prompt):
+                output = Path(self.command[self.command.index("-o") + 1])
+                workspace = Path(self.command[self.command.index("-C") + 1])
+                (workspace / "hello.txt").write_text("验收产物", encoding="utf-8")
+                output.write_text("已完成实现与验证", encoding="utf-8")
+                return "", "", 0
 
-        with patch("server.store.shutil.which", return_value="/fake/codex"), patch("server.store.subprocess.Popen", FakeProcess):
+        with patch("server.runtime.shutil.which", return_value="/fake/codex"), patch("server.runtime.subprocess.Popen", FakeProcess):
             self.store.action("start_agent", {"task_id": task["id"]})
             for _ in range(100):
                 if self.store.get("task", task["id"])["status"] == "Review":
@@ -119,28 +118,15 @@ class StoreTests(unittest.TestCase):
         started = threading.Event()
         stopped = threading.Event()
 
-        class WaitingProcess:
-            returncode = None
-
-            def __init__(self, _command, **_kwargs):
+        class WaitingProcess(FakeAgentProcess):
+            def behave(self, _prompt):
                 started.set()
-
-            def communicate(self, _prompt, timeout):
-                if not stopped.wait(timeout):
+                if not self.stopped.wait(5):
                     raise AssertionError("未收到关闭信号")
-                self.returncode = -15
-                return "", ""
-
-            def poll(self):
-                return self.returncode
-
-            def terminate(self):
                 stopped.set()
+                return "", "", -15
 
-            def kill(self):
-                stopped.set()
-
-        with patch("server.store.shutil.which", return_value="/fake/codex"), patch("server.store.subprocess.Popen", WaitingProcess):
+        with patch("server.runtime.shutil.which", return_value="/fake/codex"), patch("server.runtime.subprocess.Popen", WaitingProcess):
             self.store.action("start_agent", {"task_id": task["id"]})
             self.assertTrue(started.wait(2))
             self.store.close()
@@ -167,7 +153,7 @@ class StoreTests(unittest.TestCase):
         task = self.store.action("create_task", {"title": "完成页面", "project_id": project["id"]})
         self.store.action("create_decision", {"title": "优先每日闭环", "project_id": project["id"]})
         output = '{"priorities":[{"task_id":"' + task["id"] + '","reason":"符合当前项目决策"}]}'
-        with patch("server.store.shutil.which", return_value="/usr/bin/codex"), patch.object(self.store, "_codex_readonly", return_value=output) as model:
+        with patch("server.runtime.shutil.which", return_value="/usr/bin/codex"), patch.object(self.store, "_codex_readonly", return_value=output) as model:
             brief = self.store.action("generate_brief", {})
         self.assertEqual(brief["priorities"][0]["task_id"], task["id"])
         self.assertIn("优先每日闭环", model.call_args.args[0])

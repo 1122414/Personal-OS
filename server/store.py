@@ -6,10 +6,12 @@ import json
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from contextlib import closing
 from datetime import date, datetime, timedelta
@@ -26,6 +28,7 @@ from .obsidian_home import ObsidianHomeMixin, HOME_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, report_index
+from .runtime import RUNTIMES, execute, resolve_command, stop_process
 
 
 KINDS = (
@@ -41,7 +44,10 @@ DEFAULT_SETTINGS = {
     "workbuddy_root": "", "workbuddy_enabled": False, "workbuddy_since": "",
     "theme_transparency": 8, "daily_reports_folder": "每日AI",
     "repo_scan_root": "~/My-Item",
+    **{runtime.setting: "" for runtime in RUNTIMES.values()},
 }
+RUN_LOG_LINES = 40
+RUN_LOG_LINE_LIMIT = 300
 
 
 
@@ -72,6 +78,8 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         if not self.get("settings", "settings"):
             self.put("settings", {"id": "settings", **DEFAULT_SETTINGS})
         self._processes: dict[str, subprocess.Popen] = {}
+        self._run_logs: dict[str, list[str]] = {}
+        self._log_flushed: dict[str, float] = {}
         self._workers: dict[str, threading.Thread] = {}
         self._stopping = False
         self._active_jobs = 0
@@ -91,7 +99,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                     continue
                 process = self._processes.get(run["id"])
                 if process and process.poll() is None:
-                    process.terminate()
+                    stop_process(process)
                 run["status"] = "Interrupted"
                 run["error"] = "客户端已关闭，执行中断。请检查工作目录后重试。"
                 run["finished_at"] = stamp()
@@ -108,7 +116,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             processes = list(self._processes.values())
         for process in processes:
             if process.poll() is None:
-                process.kill()
+                stop_process(process, signal.SIGKILL)
         for worker in workers:
             if worker.is_alive():
                 worker.join(timeout=5)
@@ -183,8 +191,8 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                 "events": self.events(),
                 "today": local_day(),
                 "brief": self.brief(),
-                "runtime": {"codex_available": bool(shutil.which("codex"))},
             }
+            result["runtime"] = self.runtime_status(result["settings"])
             result["history_dates"] = self.history_dates()
             result["daily_reports"] = report_index(result["settings"])
             result["intelligence_items"] = self.intelligence_items()
@@ -369,10 +377,12 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             "project_id": project_id, "source": source, "planned_date": None,
             "deadline": p.get("deadline") or None,
             "executor_type": p.get("executor_type") if p.get("executor_type") in ("self", "agent") else "self",
-            "agent_id": "Codex" if p.get("executor_type") == "agent" else None,
+            "runtime": self._task_runtime(p.get("runtime")) if p.get("executor_type") == "agent" else None,
             "result": "", "review_status": None, "created_by": "user",
             "intelligence_id": intelligence_id,
         })
+        item["agent_id"] = RUNTIMES[item["runtime"]].label if item["runtime"] else None
+        item = self.put("task", item)
         self.event("TaskCreated", "task", item["id"], project_id, {"title": item["title"], "source": source})
         return item
 
@@ -380,7 +390,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         item = self._existing("task", p)
         if item["status"] in ("Running", "Review") and "executor_type" in p and p["executor_type"] != item["executor_type"]:
             raise ValueError("执行中的 Agent 任务不能改变执行方式")
-        for field in ("title", "description", "priority", "deadline", "project_id", "executor_type", "agent_id"):
+        for field in ("title", "description", "priority", "deadline", "project_id", "executor_type", "runtime"):
             if field in p:
                 item[field] = p[field]
         item["title"] = required_text(item["title"], "任务标题", 200)
@@ -390,7 +400,8 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             raise ValueError("项目不存在")
         if item["executor_type"] not in ("self", "agent"):
             raise ValueError("执行方式无效")
-        item["agent_id"] = "Codex" if item["executor_type"] == "agent" else None
+        item["runtime"] = self._task_runtime(item.get("runtime")) if item["executor_type"] == "agent" else None
+        item["agent_id"] = RUNTIMES[item["runtime"]].label if item["runtime"] else None
         item = self.put("task", item)
         self.event("TaskUpdated", "task", item["id"], item.get("project_id"), {"title": item["title"]})
         return item
@@ -799,6 +810,12 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         for field in ("theme_mode", "manual_theme", "nickname", "obsidian_vault", "motion", "workbuddy_root", "workbuddy_since", "repo_scan_root"):
             if field in p:
                 item[field] = str(p[field]).strip()
+        for runtime in RUNTIMES.values():
+            if runtime.setting in p:
+                value = str(p[runtime.setting] or "").strip()
+                if value and not resolve_command(value):
+                    raise ValueError(f"找不到 {runtime.label} 命令：{value}")
+                item[runtime.setting] = value
         if item.get("repo_scan_root", previous_scan_root) != previous_scan_root and not Path(item["repo_scan_root"] or "~/My-Item").expanduser().is_dir():
             raise ValueError("仓库扫描目录不存在")
         if item["theme_mode"] not in ("auto", "manual") or item["manual_theme"] not in ("morning", "afternoon", "night"):
@@ -982,8 +999,10 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             raise ValueError("请先取消归档")
         if task["status"] not in ("Inbox", "Planned", "Blocked", "Review"):
             raise ValueError("当前任务不能启动 Agent")
-        if not shutil.which("codex"):
-            raise ValueError("本机未找到 Codex CLI")
+        runtime = RUNTIMES[self._task_runtime(p.get("runtime") or task.get("runtime"))]
+        executable = runtime.command_path(self._settings())
+        if not executable:
+            raise ValueError(f"本机未找到 {runtime.label} 命令行，可在设置中填写路径")
         project = self.get("project", task.get("project_id") or "")
         workspace = Path(project.get("workspace_path") or "") if project else None
         if not workspace or not project.get("workspace_path") or not workspace.is_dir():
@@ -1010,14 +1029,17 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         }
         prompt += "\n以下是用户明确记录的项目约束与参考规则，请遵守；若与任务矛盾请说明阻塞：\n" + json.dumps(context, ensure_ascii=False)
         before = self._workspace_snapshot(workspace)
-        run = self.put("agent_run", {"task_id": task["id"], "agent_id": "Codex", "status": "Running", "started_at": stamp(), "finished_at": None, "result": "", "error": "", "workspace_path": str(workspace), "before_snapshot": before})
+        run = self.put("agent_run", {"task_id": task["id"], "agent_id": runtime.label, "runtime": runtime.id, "external_id": "", "log_tail": [],
+                                     "status": "Running", "started_at": stamp(), "finished_at": None, "result": "", "error": "",
+                                     "workspace_path": str(workspace), "before_snapshot": before})
         task["status"] = "Running"
         task["executor_type"] = "agent"
-        task["agent_id"] = "Codex"
+        task["runtime"] = runtime.id
+        task["agent_id"] = runtime.label
         task["review_status"] = None
         self.put("task", task)
-        self.event("AgentRunStarted", "agent_run", run["id"], task.get("project_id"), {"title": task["title"], "agent": "Codex"})
-        worker = threading.Thread(target=self._run_codex, args=(run["id"], prompt, before), daemon=True)
+        self.event("AgentRunStarted", "agent_run", run["id"], task.get("project_id"), {"title": task["title"], "agent": runtime.label})
+        worker = threading.Thread(target=self._run_agent, args=(run["id"], prompt, before, executable), daemon=True)
         self._workers[run["id"]] = worker
         worker.start()
         return {k: v for k, v in run.items() if k != "before_snapshot"}
@@ -1071,7 +1093,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         run.pop("before_snapshot", None)
         self.put("agent_run", run)
 
-    def _run_codex(self, run_id: str, prompt: str, before: dict[str, tuple[int, int]]) -> None:
+    def _run_agent(self, run_id: str, prompt: str, before: dict[str, tuple[int, int]], executable: str) -> None:
         with self.lock:
             run = self.get("agent_run", run_id)
         if not run or run["status"] != "Running" or self._stopping:
@@ -1080,47 +1102,58 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
                     self._record_artifacts(run, before)
                 self._workers.pop(run_id, None)
             return
-        output_path = self.path.parent / f"agent-{run_id}.txt"
-        cmd = ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "workspace-write", "-C", run["workspace_path"], "-o", str(output_path), "-"]
-        try:
-            process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        runtime = RUNTIMES[run.get("runtime") or "codex"]
+
+        def started(process: Any) -> None:
             with self.lock:
                 self._processes[run_id] = process
                 if self._stopping or self.get("agent_run", run_id)["status"] != "Running":
-                    process.terminate()
-            stdout, stderr = process.communicate(prompt, timeout=3600)
-            result = output_path.read_text(encoding="utf-8") if output_path.exists() else stdout
-            error = "" if process.returncode == 0 else (stderr[-4000:] or "Codex 执行失败")
-            succeeded = process.returncode == 0
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.communicate()
-            result, error, succeeded = "", "Codex 执行超时", False
-        except OSError as exc:
-            result, error, succeeded = "", str(exc), False
-        finally:
-            output_path.unlink(missing_ok=True)
+                    stop_process(process)
+
+        outcome = execute(runtime, executable, prompt, Path(run["workspace_path"]), started, lambda text: self._agent_log(run_id, text))
         with self.lock:
             self._processes.pop(run_id, None)
+            self._log_flushed.pop(run_id, None)
+            log_tail = self._run_logs.pop(run_id, None)
             run = self.get("agent_run", run_id)
             if run:
                 self._record_artifacts(run, before)
                 run = self.get("agent_run", run_id)
             self._workers.pop(run_id, None)
+            if run and log_tail is not None:
+                run["log_tail"] = log_tail
+            if run and outcome.external_id:
+                run["external_id"] = outcome.external_id
             if not run or run["status"] != "Running":
+                if run:
+                    self.put("agent_run", run)
                 return
             task = self.get("task", run["task_id"])
-            run["status"] = "Finished" if succeeded else "Failed"
-            run["result"] = result[:30000]
-            run["error"] = error
+            run["status"] = "Finished" if outcome.succeeded else "Failed"
+            run["result"] = outcome.result[:30000]
+            run["error"] = outcome.error
             run["finished_at"] = stamp()
             self.put("agent_run", run)
             if task:
-                task["status"] = "Review" if succeeded else "Blocked"
-                task["result"] = run["result"] if succeeded else ""
-                task["review_status"] = "Pending" if succeeded else "Failed"
+                task["status"] = "Review" if outcome.succeeded else "Blocked"
+                task["result"] = run["result"] if outcome.succeeded else ""
+                task["review_status"] = "Pending" if outcome.succeeded else "Failed"
                 self.put("task", task)
-            self.event("AgentRunFinished" if succeeded else "AgentRunFailed", "agent_run", run_id, task.get("project_id") if task else None, {"title": task["title"] if task else "Agent Run", "status": run["status"]})
+            self.event("AgentRunFinished" if outcome.succeeded else "AgentRunFailed", "agent_run", run_id, task.get("project_id") if task else None, {"title": task["title"] if task else "Agent Run", "status": run["status"]})
+
+    def _agent_log(self, run_id: str, text: str) -> None:
+        with self.lock:
+            lines = self._run_logs.setdefault(run_id, [])
+            lines.append(text[:RUN_LOG_LINE_LIMIT])
+            del lines[:-RUN_LOG_LINES]
+            now = time.monotonic()
+            if now - self._log_flushed.get(run_id, 0) < 1:
+                return
+            self._log_flushed[run_id] = now
+            run = self.get("agent_run", run_id)
+            if run and run["status"] == "Running":
+                run["log_tail"] = list(lines)
+                self.put("agent_run", run)
 
     def cancel_agent(self, p: dict[str, Any]) -> dict[str, Any]:
         run = self._existing("agent_run", p)
@@ -1128,7 +1161,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             raise ValueError("Agent 当前不在运行")
         process = self._processes.get(run["id"])
         if process:
-            process.terminate()
+            stop_process(process)
         run["status"] = "Canceled"
         run["finished_at"] = stamp()
         self.put("agent_run", run)
@@ -1161,7 +1194,7 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         raise ValueError("审核选择无效")
 
     def generate_brief(self, p: dict[str, Any]) -> dict[str, Any]:
-        if not shutil.which("codex"):
+        if not self.codex_command():
             raise ValueError("本机未找到 Codex CLI")
         tasks = [t for t in self.all("task") if t["status"] in ("Inbox", "Planned") and not t.get("archived_at")]
         if not tasks:
@@ -1245,13 +1278,14 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
         return log
 
     def _codex_readonly(self, prompt: str) -> str:
-        if not shutil.which("codex"):
+        executable = self.codex_command()
+        if not executable:
             raise ValueError("本机未找到 Codex CLI")
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "result.txt"
             try:
                 process = subprocess.run(
-                    ["codex", "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-C", str(self.path.parent), "-o", str(output), "-"],
+                    [executable, "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-C", str(self.path.parent), "-o", str(output), "-"],
                     input=prompt, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1261,6 +1295,24 @@ class Store(WorkspaceMixin, LearningMixin, LearningSummaryMixin, RecallMixin, Tr
             if self._stopping:
                 raise ValueError("服务正在关闭，生成结果未写入")
             return output.read_text(encoding="utf-8").strip()
+
+    def _settings(self) -> dict[str, Any]:
+        return {**DEFAULT_SETTINGS, **(self.get("settings", "settings") or {})}
+
+    def codex_command(self) -> str | None:
+        return RUNTIMES["codex"].command_path(self._settings())
+
+    @staticmethod
+    def _task_runtime(value: Any) -> str:
+        value = value or "codex"
+        if value not in RUNTIMES:
+            raise ValueError("未知的执行通道")
+        return value
+
+    @staticmethod
+    def runtime_status(settings: dict[str, Any]) -> dict[str, Any]:
+        agents = [{"id": r.id, "label": r.label, "setting": r.setting, "binary": r.binary, "available": bool(r.command_path(settings))} for r in RUNTIMES.values()]
+        return {"codex_available": next(a["available"] for a in agents if a["id"] == "codex"), "agents": agents}
 
     def _existing(self, kind: str, p: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(p.get("id"), str) or len(p["id"]) > 200:

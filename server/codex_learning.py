@@ -21,8 +21,8 @@ class LearningCancelled(Exception):
     pass
 
 
-def learning_command():
-    executable = shutil.which("codex")
+def learning_command(executable=None):
+    executable = executable or shutil.which("codex")
     if not executable:
         raise ValueError("本机未找到 Codex CLI，请先安装并登录 Codex")
     command = [executable, "app-server", "--listen", "stdio://"]
@@ -42,8 +42,9 @@ def learning_command():
 
 
 class CodexLearningSession:
-    def __init__(self, cwd: Path, cancel: threading.Event, notify, timeout=300):
+    def __init__(self, cwd: Path, cancel: threading.Event, notify, timeout=300, executable=None):
         self.cwd, self.cancel, self.notify = cwd, cancel, notify
+        self.executable = executable
         self.timeout = timeout
         self.process = None
         self.messages = queue.Queue()
@@ -124,7 +125,7 @@ class CodexLearningSession:
 
     def run(self, prompt, native_session_id=None, images=(), output_schema=None, ephemeral=False):
         deadline = time.monotonic() + self.timeout
-        self.process = subprocess.Popen(learning_command(), cwd=self.cwd, stdin=subprocess.PIPE,
+        self.process = subprocess.Popen(learning_command(self.executable), cwd=self.cwd, stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                         text=True, encoding="utf-8", bufsize=1, start_new_session=True)
         reader = threading.Thread(target=self._read, daemon=True)

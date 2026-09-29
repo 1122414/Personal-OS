@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from agent_fakes import FakeAgentProcess
 from server.store import Store, local_day
 
 
@@ -55,7 +56,7 @@ class RepairTests(unittest.TestCase):
         channel = self.store.action("create_channel", {"name": "test"})
         item = self.store.action("create_intelligence", {"title": "IGNORE_SENTINEL", "source": "test", "channel_id": channel["id"], "why_recommended": "test"})
         self.store.action("feedback_intelligence", {"id": item["id"], "feedback": "ignore"})
-        with patch("server.store.shutil.which", return_value="codex"), patch.object(self.store, "_codex_readonly", return_value=json.dumps({"priorities": [{"task_id": task["id"], "reason": "valid"}]})) as model:
+        with patch("server.runtime.shutil.which", return_value="codex"), patch.object(self.store, "_codex_readonly", return_value=json.dumps({"priorities": [{"task_id": task["id"], "reason": "valid"}]})) as model:
             self.store.action("generate_brief", {})
         self.assertIn("CONFIRMED_PREVIOUS", model.call_args.args[0])
         self.assertNotIn("IGNORE_SENTINEL", model.call_args.args[0])
@@ -104,28 +105,16 @@ class RepairTests(unittest.TestCase):
                 started, stopped = threading.Event(), threading.Event()
                 prompts = []
 
-                class Process:
-                    returncode = None
-
-                    def __init__(self, *_args, **_kwargs):
-                        pass
-
-                    def communicate(self, prompt, timeout):
+                class Process(FakeAgentProcess):
+                    def behave(self, prompt):
                         prompts.append(prompt)
                         (workspace / "partial.txt").write_text("actual change")
                         started.set()
                         if canceled:
-                            stopped.wait(3)
-                        self.returncode = -15 if canceled else 1
-                        return "", "failure"
+                            self.stopped.wait(3)
+                        return "", "failure", -15 if canceled else 1
 
-                    def terminate(self):
-                        stopped.set()
-
-                    def poll(self):
-                        return self.returncode
-
-                with patch("server.store.shutil.which", return_value="codex"), patch("server.store.subprocess.Popen", Process):
+                with patch("server.runtime.shutil.which", return_value="codex"), patch("server.runtime.subprocess.Popen", Process):
                     run = self.store.action("start_agent", {"task_id": task["id"]})
                     self.assertTrue(started.wait(2))
                     if canceled:
@@ -173,22 +162,13 @@ class RepairTests(unittest.TestCase):
         project = self.store.action("create_project", {"name": "timeout", "workspace_path": str(workspace)})
         task = self.task(project_id=project["id"], executor_type="agent")
 
-        class Process:
-            returncode = None
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                (workspace / "partial.txt").write_text("partial")
+                self.stopped.wait(5)
+                return "", "", -9
 
-            def __init__(self, *_args, **_kwargs):
-                pass
-
-            def communicate(self, prompt=None, timeout=None):
-                if timeout:
-                    (workspace / "partial.txt").write_text("partial")
-                    raise subprocess.TimeoutExpired("codex", timeout)
-                return "", ""
-
-            def kill(self):
-                self.returncode = -9
-
-        with patch("server.store.shutil.which", return_value="codex"), patch("server.store.subprocess.Popen", Process):
+        with patch("server.runtime.shutil.which", return_value="codex"), patch("server.runtime.subprocess.Popen", Process), patch("server.runtime.RUN_TIMEOUT", 0.2):
             run = self.store.action("start_agent", {"task_id": task["id"]})
             worker = self.store._workers.get(run["id"])
             if worker:

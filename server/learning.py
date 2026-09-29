@@ -220,7 +220,7 @@ class LearningMixin:
                                 raise ValueError("回复超过保存上限，已保留此前内容，请缩小问题范围")
                             self.put("learning_message", answer)
 
-                client = CodexLearningSession(Path(folder), cancel, notify)
+                client = CodexLearningSession(Path(folder), cancel, notify, executable=self.codex_command())
                 client.run(prompt, native_session_id=run.get("native_session_id"), images=images)
                 with self.lock:
                     if self._stopping:
