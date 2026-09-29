@@ -62,13 +62,17 @@ def _sandbox_string(path: str) -> str:
     return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _regex_literal(text: str) -> str:
+    return re.sub(r"([.^$*+?()[\]{}|\\])", r"\\\1", text)
+
+
 def sandbox_profile(workspace: Path, state_paths: list[str]) -> str:
     """Deny every file write except the workspace, the agent's own state and temp files."""
     home = str(Path.home().resolve())
     allowed = [f"(subpath {_sandbox_string(str(workspace.resolve()))})",
                f"(subpath {_sandbox_string(str(Path(tempfile.gettempdir()).resolve()))})",
                '(regex #"^/dev/")']
-    allowed += [f'(regex #"^{re.sub(r"([.^$*+?()[\]{}|\\])", r"\\\1", home + "/" + prefix)}")' for prefix in state_paths]
+    allowed += [f'(regex #"^{_regex_literal(home + "/" + prefix)}")' for prefix in state_paths]
     return f"(version 1)(allow default)(deny file-write*)(allow file-write* {' '.join(allowed)})"
 
 

@@ -142,6 +142,11 @@ Personal OS（任务 / 看板 / 审核 / 日报 / 首页）
 
 每一步完成后先使用，再决定下一步。
 
+实施状态（2026-09-29）：
+
+- 步骤 1 已完成开发，见 [首页验收记录](2026-09-29_home-redesign-verification.md)；7 天试用与 Obsidian 回写核对由用户进行。
+- 步骤 2 已完成开发，见 [第二阶段验收记录](2026-09-29_phase2-verification.md)。按后续讨论调整为：本机直连 Kimi、Claude Code（Codex 可填路径），不使用公司内部版 iMultica；开源 Multica 通道已写好，待在能使用 Docker 的机器上验证。Kimi 真实派单、审核、退回、取消、重启已验证；Claude Code 因模型服务余额不足待实测。桌面客户端能找到 ChatGPT.app 自带的 codex-cli，第 8 节「Codex 不在 PATH」一项在客户端内已缓解，但尚未用它实际派单。进入步骤 3 的条件（至少一类任务稳定派出并收回）需实际使用一周后判断。
+
 ## 8. 未定事项与风险
 
 - **手机入口与同步冲突。** 用户使用安卓，选择借 Obsidian 手机端中转，但目前 Obsidian 在手机和 Mac 之间没有同步。需要先选择同步方式（例如 Syncthing 点对点同步、Remotely Save 插件配合坚果云 WebDAV），或者推迟手机入口。
