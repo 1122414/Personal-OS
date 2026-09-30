@@ -20,7 +20,7 @@
 .home-grid .panel>.brief-actions{flex:none;margin-top:12px}
 .home-grid .panel>.empty{padding:10px 0}
 .home-side{grid-area:side;display:flex;flex-direction:column;gap:14px;min-height:0}
-.home-side>.home-items{flex:1}
+.home-side>.panel{flex:none}.home-side>.home-items{flex:1 1 220px;min-height:220px}
 .home-grid .home-strip{flex:none;padding:12px 22px;gap:8px}
 .strip-row{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:13px}
 .strip-row .overline{flex:none}
@@ -288,11 +288,12 @@
 .report-tools{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
 .log-text h2{font-size:15px;margin:14px 0 6px}
 .log-text h2:first-child{margin-top:0}
-.home-grid.no-last{grid-template-areas:"today side" "today side"}
-@media(max-width:650px){.home-grid.no-last{grid-template-areas:"today" "side"}}
+.home-grid.no-last{grid-template-rows:1fr;grid-template-areas:"today side"}.home-grid.no-last>.home-side{min-height:auto}
+@media(max-width:650px){.home-grid.no-last{grid-template-rows:none;grid-template-areas:"today" "side"}}
 .panel-toggle{display:inline-flex;align-items:center;gap:8px;background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer}
 .panel-toggle span{font-size:.7em;color:var(--muted)}
-.home-side>.home-items.collapsed{flex:none}
+.home-side>.home-items.collapsed{flex:none;min-height:0}
+@media(max-width:900px),(max-height:700px){.home-side>.home-items{flex:none;min-height:0}}
 .home-grid .home-items.collapsed .panel-heading{margin-bottom:0}
 .report-module-row{display:grid;grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr) auto;gap:8px;align-items:center;margin:8px 0}
 .report-digest{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:13px}.digest-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.digest-head .tabs.compact{margin:0}.digest-head .tabs.compact button{padding:4px 10px}.report-digest .strip-title{flex:none;align-self:flex-start;max-width:100%;font-weight:700}.digest-items{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:5px;line-height:1.55;color:var(--ink)}.report-digest>.text-link{align-self:flex-end}
