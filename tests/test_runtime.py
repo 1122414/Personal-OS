@@ -387,6 +387,22 @@ class DirectRuntimeTests(unittest.TestCase):
         self.assertNotIn("outside_writes", state)
         self.assertEqual([entry["type"] for entry in state["transcript"]], ["text", "tool", "tool", "text"])
 
+    def test_workbuddy_logged_out_run_fails_with_the_agent_message(self):
+        state, _ = feed(RUNTIMES["workbuddy"], self.workspace, (FIXTURES / "workbuddy-stream-auth-error.jsonl").read_text())
+        self.assertIn("Authentication required", state["error"])
+        self.assertEqual(state["external_id"], "01a0f0f8-5a69-76e1-919c-74b80a17fab8")
+
+    def test_workbuddy_prefers_setting_then_bundled_cli(self):
+        runtime = RUNTIMES["workbuddy"]
+        custom = self.workspace / "codebuddy"
+        custom.write_text("#!/bin/sh\n")
+        custom.chmod(0o755)
+        self.assertEqual(runtime.command_path({"workbuddy_command": str(custom)}), str(custom))
+        with patch.object(type(runtime), "bundled", str(custom)), patch("server.runtime.shutil.which", return_value=None):
+            self.assertEqual(runtime.command_path({}), str(custom))
+        with patch.object(type(runtime), "bundled", "/nonexistent/codebuddy"), patch("server.runtime.shutil.which", return_value=None):
+            self.assertIsNone(runtime.command_path({}))
+
     def test_cursor_stream_logs_tools_and_keeps_last_message_as_result(self):
         # Hand-written from the documented cursor-agent stream-json shape.
         outside = str(Path("/tmp/elsewhere.txt").resolve())

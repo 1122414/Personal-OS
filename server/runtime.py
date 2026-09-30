@@ -237,17 +237,32 @@ class ClaudeRuntime(Runtime):
             parts = []
             for item in (event.get("message") or {}).get("content") or []:
                 if item.get("type") == "text" and item.get("text"):
+                    state["last_text"] = item["text"]
                     say(state, item["text"])
                     parts.append(_brief(item["text"]))
                 elif item.get("type") == "tool_use":
                     parts.append(tool(state, _tool_line(item.get("name") or "工具", item.get("input") or {}, state)))
             return " · ".join(parts) or None
         if kind == "result":
-            state["result"] = event.get("result") or ""
+            state["result"] = event.get("result") or state.get("last_text") or ""
             if event.get("is_error"):
-                state["error"] = event.get("result") or "Claude Code 执行失败"
+                state["error"] = event.get("result") or state.get("last_text") or f"{self.label} 执行失败"
             return None
         return None
+
+
+class WorkBuddyRuntime(ClaudeRuntime):
+    """CodeBuddy CLI bundled with WorkBuddy; same print-mode flags and stream-json as Claude Code."""
+    id, label, binary = "workbuddy", "WorkBuddy", "codebuddy"
+    bundled = "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/bin/codebuddy"
+    state_paths = [".codebuddy"]
+
+    def command_path(self, settings: dict[str, Any]) -> str | None:
+        return resolve_command(settings.get(self.setting) or "") or resolve_command(self.bundled) or resolve_command(self.binary)
+
+    def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
+        return [executable, "-p", "--output-format", "stream-json", "--verbose",
+                "--allowedTools", "Bash", "--permission-mode", "acceptEdits"]
 
 
 class CursorRuntime(Runtime):
@@ -429,7 +444,7 @@ def _json(text: str) -> Any:
     return value if isinstance(value, dict) else None
 
 
-RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime(), KimiRuntime(), ClaudeRuntime(), CursorRuntime(), MulticaRuntime())}
+RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime(), KimiRuntime(), ClaudeRuntime(), CursorRuntime(), WorkBuddyRuntime(), MulticaRuntime())}
 
 
 def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,
