@@ -223,6 +223,7 @@ def daily_automation(store: Store, stop: threading.Event) -> None:
                             store.action("generate_project_pulse", {"id": project["id"]})
                         except ValueError as exc:
                             store.event("ProjectPulseFailed", "project", project["id"], project["id"], {"error": str(exc)[:200]})
+                store.daily_card_push()
             if hour >= 20 and not any(log["date"] == day for log in store.all("daily_log")):
                 store.action("draft_log", {})
         except (OSError, ValueError) as exc:
