@@ -184,6 +184,10 @@ class Runtime:
         """{"models": [{"id", "label"}], "default": id or ""} as far as this machine can tell."""
         return {"models": [], "default": ""}
 
+    def launcher(self, executable: str) -> list[str]:
+        """What has to run the executable when it cannot run on its own."""
+        return []
+
     def run(self, executable: str, prompt: str, workspace: Path, on_start: Callable[[Any], None],
             on_log: Callable[[str], None], settings: dict[str, Any], external_id: str = "", rerun: bool = False,
             on_external_id: Callable[[str], None] = lambda _: None, session: str = "",
@@ -316,12 +320,22 @@ class WorkBuddyRuntime(ClaudeRuntime):
     def command_path(self, settings: dict[str, Any]) -> str | None:
         return resolve_command(settings.get(self.setting) or "") or resolve_command(self.bundled) or resolve_command(self.binary)
 
+    def launcher(self, executable: str) -> list[str]:
+        """The CLI is a ``#!/usr/bin/env node`` script; inside the app it runs on the app's own Electron,
+        because a client opened from Finder usually has no node on PATH."""
+        path = Path(executable)
+        app = next((parent for parent in path.parents if parent.suffix == ".app"), None)
+        electron = app / "Contents" / "MacOS" / "Electron" if app else None
+        if electron and electron.is_file() and os.access(electron, os.X_OK):
+            return ["/usr/bin/env", "ELECTRON_RUN_AS_NODE=1", str(electron)]
+        return []
+
     def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
         return [executable, "-p", "--output-format", "stream-json", "--verbose",
                 "--allowedTools", "Bash", "--permission-mode", "acceptEdits"]
 
     def models(self, executable: str) -> dict[str, Any]:
-        listed = re.search(r"Currently supported: \(([^)]*)\)", _cli_output(executable, "--help"))
+        listed = re.search(r"Currently supported: \(([^)]*)\)", _cli_output(*self.launcher(executable), executable, "--help"))
         names = [name.strip() for name in listed.group(1).split(",") if name.strip()] if listed else []
         return {"models": [{"id": name, "label": name} for name in names], "default": ""}
 
@@ -530,6 +544,7 @@ def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,
         command = runtime.command(executable, workspace, output, prompt) + (runtime.resume_args(session) if session else [])
         if model and runtime.model_flag:
             command[runtime.model_position:runtime.model_position] = [runtime.model_flag, model]
+        command = runtime.launcher(executable) + command
         if runtime.sandboxed:
             if not Path(SANDBOX_EXEC).is_file():
                 return Outcome(False, error=f"本机缺少 sandbox-exec，无法把 {runtime.label} 限制在工作目录内，已拒绝执行")

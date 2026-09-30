@@ -162,6 +162,27 @@ class RuntimeTests(unittest.TestCase):
             execute(RUNTIMES["codex"], "/bin/codex", "做事", self.workspace, lambda _: None, lambda _: None, model="gpt-x")
         self.assertEqual(seen["command"][:4], ["/bin/codex", "exec", "-m", "gpt-x"])
 
+    def test_bundled_workbuddy_cli_runs_on_the_apps_electron_without_node_on_path(self):
+        app = self.root / "WorkBuddy.app" / "Contents"
+        script = app / "Resources" / "cli" / "codebuddy"
+        electron = app / "MacOS" / "Electron"
+        for path in (script, electron):
+            path.parent.mkdir(parents=True)
+            path.write_text("#!/bin/sh\n")
+            path.chmod(0o755)
+        seen = {}
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                seen["command"] = self.command
+                return "", "", 0
+
+        with patch("server.runtime.subprocess.Popen", Process):
+            execute(RUNTIMES["workbuddy"], str(script), "做事", self.workspace, lambda _: None, lambda _: None, model="glm-5.1-ioa")
+        command = seen["command"][seen["command"].index("/usr/bin/env"):]
+        self.assertEqual(command[:6], ["/usr/bin/env", "ELECTRON_RUN_AS_NODE=1", str(electron), str(script), "--model", "glm-5.1-ioa"])
+        self.assertEqual(RUNTIMES["workbuddy"].launcher("/usr/local/bin/codebuddy"), [])
+
     def test_models_are_read_from_cursor_and_workbuddy_output(self):
         cursor = "Available models\n\nauto - Auto (default)\ngpt-5.2 - GPT-5.2\ngrok-4.7-low-fast - Grok 4.7 Low Fast\u200b\u200b\n"
         with patch("server.runtime._cli_output", return_value=cursor):
