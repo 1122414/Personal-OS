@@ -31,7 +31,7 @@ from .cards import CardsMixin, CARD_KINDS, CARD_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
 from .reports import folder_name, module_list, report_index
-from .runtime import RUNTIMES, resolve_command, stop_process
+from .runtime import RUNTIMES, discover_models, model_name, resolve_command, stop_process
 
 
 KINDS = (
@@ -398,7 +398,7 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
             "description": (p.get("description") or "").strip()[:10000],
             "status": "Inbox", "project_id": project_id, "source": source,
             "executor_type": "agent", "runtime": runtime, "agent_id": RUNTIMES[runtime].label,
-            "result": "", "review_status": None, "created_by": "user",
+            "model": model_name(p.get("model")), "result": "", "review_status": None, "created_by": "user",
             "intelligence_id": intelligence_id, "record_id": record["id"] if record else None,
         })
         if record:
@@ -423,8 +423,12 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         if "project_id" in p:
             item["project_id"] = self._agent_project(p["project_id"])
         if "runtime" in p:
+            if p["runtime"] != item.get("runtime") and "model" not in p:
+                item["model"] = ""
             item["runtime"] = self._task_runtime(p["runtime"])
             item["agent_id"] = RUNTIMES[item["runtime"]].label
+        if "model" in p:
+            item["model"] = model_name(p["model"])
         item = self.put("task", item)
         self.event("TaskUpdated", "task", item["id"], item.get("project_id"), {"title": item["title"]})
         return item
@@ -963,6 +967,10 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         if task["status"] not in ("Inbox", "Planned", "Blocked", "Review"):
             raise ValueError("当前任务不能启动 Agent")
         runtime = RUNTIMES[self._task_runtime(p.get("runtime") or task.get("runtime"))]
+        if "model" in p:
+            model = model_name(p["model"])
+        else:
+            model = task.get("model") or "" if runtime.id == task.get("runtime") else ""
         executable = runtime.command_path(self._settings())
         if not executable:
             raise ValueError(f"本机未找到 {runtime.label} 命令行，可在设置中填写路径")
@@ -1001,11 +1009,12 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         run = self.put("agent_run", {"task_id": task["id"], "agent_id": runtime.label, "runtime": runtime.id, "external_id": rerun_id, "log_tail": [],
                                      "status": "Running", "started_at": stamp(), "finished_at": None, "result": "", "error": "",
                                      "workspace_path": str(workspace), "before_snapshot": before,
-                                     "message": message or None, "resumed": bool(session), "transcript": []})
+                                     "message": message or None, "resumed": bool(session), "transcript": [], "model": model})
         task["status"] = "Running"
         task["executor_type"] = "agent"
         task["runtime"] = runtime.id
         task["agent_id"] = runtime.label
+        task["model"] = model
         task["review_status"] = None
         self.put("task", task)
         self.event("AgentRunStarted", "agent_run", run["id"], task.get("project_id"), {"title": task["title"], "agent": runtime.label})
@@ -1034,7 +1043,7 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
             raise ValueError("Agent 回复后才能接着说")
         if not any(r["task_id"] == task["id"] for r in self.all("agent_run")):
             raise ValueError("请先派出这个任务")
-        return self.start_agent({"task_id": task["id"], "message": text, "runtime": p.get("runtime")})
+        return self.start_agent({"task_id": task["id"], "message": text, "runtime": p.get("runtime"), **({"model": p["model"]} if "model" in p else {})})
 
     @staticmethod
     def _workspace_snapshot(workspace: Path) -> dict[str, tuple[int, int]]:
@@ -1112,7 +1121,8 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
 
         log = lambda text: self._agent_log(run_id, text)
         live = lambda entries: self._agent_transcript(run_id, entries)
-        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, log, self._settings(), external_id, rerun, remember, session=session, on_transcript=live)
+        model = run.get("model") or ""
+        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, log, self._settings(), external_id, rerun, remember, session=session, on_transcript=live, model=model)
         if session and not outcome.succeeded and not outcome.transcript and not outcome.detached:
             with self.lock:
                 current = self.get("agent_run", run_id)
@@ -1122,7 +1132,7 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
                     self.put("agent_run", current)
             if retry:
                 log("原会话无法续接，已开新会话并附上之前的对话")
-                outcome = runtime.run(executable, fallback_prompt, Path(run["workspace_path"]), started, log, self._settings(), "", False, remember, on_transcript=live)
+                outcome = runtime.run(executable, fallback_prompt, Path(run["workspace_path"]), started, log, self._settings(), "", False, remember, on_transcript=live, model=model)
         with self.lock:
             self._processes.pop(run_id, None)
             self._log_flushed.pop(run_id, None)
@@ -1393,6 +1403,13 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
     def runtime_status(settings: dict[str, Any]) -> dict[str, Any]:
         agents = [{"id": r.id, "label": r.label, "setting": r.setting, "binary": r.binary, "sandboxed": r.sandboxed, "remote": r.remote, "available": bool(r.command_path(settings))} for r in RUNTIMES.values()]
         return {"codex_available": next(a["available"] for a in agents if a["id"] == "codex"), "agents": agents}
+
+    def agent_models(self, runtime_id: str) -> dict[str, Any]:
+        runtime = RUNTIMES.get(runtime_id)
+        if not runtime or runtime.remote:
+            raise ValueError("该通道不支持选择模型")
+        executable = runtime.command_path(self._settings())
+        return discover_models(runtime, executable) if executable else {"models": [], "default": ""}
 
     def _existing(self, kind: str, p: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(p.get("id"), str) or len(p["id"]) > 200:

@@ -13,6 +13,7 @@ import Records from './pages/Records.jsx'
 import Learning from './pages/Learning.jsx'
 import { StateChip } from './PersonalState.jsx'
 import TodoReminder from './TodoReminder.jsx'
+import ModelField from './ModelField.jsx'
 
 function themeByTime() {
   const hour = new Date().getHours()
@@ -38,6 +39,15 @@ function useClock() {
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id) }, [])
   return now
+}
+
+function TaskAgent({ item, agents }) {
+  const [runtime, setRuntime] = useState(item.runtime || agents.find(agent => agent.available)?.id || 'codex')
+  const [model, setModel] = useState(item.model || '')
+  return <>
+    <Field label="执行通道"><select name="runtime" value={runtime} onChange={event => { setRuntime(event.target.value); setModel('') }} required disabled={['Running', 'Review'].includes(item.status)}>{agents.map(agent => <option key={agent.id} value={agent.id}>{agent.label}{agent.available ? '' : '（本机未找到）'}</option>)}</select></Field>
+    <Field label="模型"><ModelField name="model" runtime={runtime} value={model} onChange={setModel} /></Field>
+  </>
 }
 
 function FormModal({ modal, data, run, close }) {
@@ -96,7 +106,7 @@ function FormModal({ modal, data, run, close }) {
     {(kind === 'task' || kind === 'task-edit') && <>
       <Field label="任务标题"><input name="title" defaultValue={item.title || ''} required autoFocus maxLength={200} /></Field>
       <Field label="要求与完成标准（Agent 会照着这里做和自检）"><textarea name="description" defaultValue={item.description || ''} rows={5} /></Field>
-      {agentProjects.length ? <div className="form-columns"><Field label="在哪个项目目录里做"><select name="project_id" defaultValue={agentProjects.some(project => project.id === item.project_id) ? item.project_id : agentProjects[0].id} required disabled={['Running', 'Review'].includes(item.status)}>{agentProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field><Field label="执行通道"><select name="runtime" defaultValue={item.runtime || (data.runtime?.agents || []).find(agent => agent.available)?.id || 'codex'} required disabled={['Running', 'Review'].includes(item.status)}>{(data.runtime?.agents || []).map(agent => <option key={agent.id} value={agent.id}>{agent.label}{agent.available ? '' : '（本机未找到）'}</option>)}</select></Field></div>
+      {agentProjects.length ? <div className="form-columns"><Field label="在哪个项目目录里做"><select name="project_id" defaultValue={agentProjects.some(project => project.id === item.project_id) ? item.project_id : agentProjects[0].id} required disabled={['Running', 'Review'].includes(item.status)}>{agentProjects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field><TaskAgent item={item} agents={data.runtime?.agents || []} /></div>
         : <p className="form-hint">还没有设置本地目录的项目。Agent 任务必须在某个项目目录里执行，请先到「项目」里给项目填写本地工作目录。</p>}
       {!editing && <input type="hidden" name="source" value={item.source || 'Manual'} />}
     </>}

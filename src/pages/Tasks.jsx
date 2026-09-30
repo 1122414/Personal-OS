@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Button, Empty, Panel, STATUS, runDuration, taskState, timeLabel } from '../ui.jsx'
 import { Changes, Composer, Conversation, RUN_STATUS } from './AgentChat.jsx'
+import ModelField from '../ModelField.jsx'
 
 const tabs = [['all', '全部'], ['Inbox', '待派出'], ['Running', '运行中'], ['Reply', '等你回复'], ['Review', '待验收'], ['Done', '已完成'], ['Blocked', '失败或取消'], ['archived', '已归档']]
 const COLUMNS = [['Inbox', '待派出'], ['Running', '运行中'], ['Reply', '等你回复'], ['Review', '待验收'], ['Done', '已完成'], ['Blocked', '失败或取消']]
@@ -8,9 +9,11 @@ const DONE_LIMIT = 12
 function Dispatch({ task, agents, latest, run }) {
   const available = agents.filter(agent => agent.available)
   const [choice, setChoice] = useState('')
+  const [model, setModel] = useState(null)
   if (!available.length) return <span className="muted">本机未找到可用 Agent，请在设置中填写命令路径</span>
   const value = choice || (available.some(agent => agent.id === task.runtime) ? task.runtime : available[0].id)
-  return <span className="dispatch"><select aria-label="执行通道" value={value} onChange={event => setChoice(event.target.value)}>{available.map(agent => <option key={agent.id} value={agent.id}>{agent.label}</option>)}</select><Button variant="primary" onClick={() => run('start_agent', { task_id: task.id, runtime: value })}>{latest && latest.status !== 'Finished' ? '重试' : '派出'}</Button></span>
+  const chosen = model ?? (value === task.runtime ? task.model || '' : '')
+  return <span className="dispatch"><select aria-label="执行通道" value={value} onChange={event => { setChoice(event.target.value); setModel('') }}>{available.map(agent => <option key={agent.id} value={agent.id}>{agent.label}</option>)}</select><ModelField runtime={value} value={chosen} onChange={setModel} /><Button variant="primary" onClick={() => run('start_agent', { task_id: task.id, runtime: value, model: chosen })}>{latest && latest.status !== 'Finished' ? '重试' : '派出'}</Button></span>
 }
 
 function Board({ tasks, projects, allRuns, latestRun, selectedId, select }) {
@@ -60,7 +63,7 @@ export default function Tasks({ data, run, open, focus, navigate }) {
       </Panel>}
       <Panel className="detail-panel">
         {selected ? <><div className="detail-title"><div><span className="overline">TASK DETAIL</span><h2>{selected.title}</h2></div><span className={`status status-${taskState(selected, runs)}`}>{STATUS[taskState(selected, runs)]}</span></div>
-          <div className="meta-grid"><div><small>项目目录</small><strong>{project?.name || '未关联项目'}</strong></div><div><small>执行通道</small><strong>{selected.agent_id || '未选择'}</strong></div><div><small>对话</small><strong>{runs.length} 轮</strong></div><div><small>最近一次</small><strong>{runs[0] ? `${RUN_STATUS[runs[0].status] || runs[0].status} · ${runDuration(runs[0])}` : '尚未派出'}</strong></div></div>
+          <div className="meta-grid"><div><small>项目目录</small><strong>{project?.name || '未关联项目'}</strong></div><div><small>执行通道</small><strong>{selected.agent_id || '未选择'}{selected.model ? ` · ${selected.model}` : ''}</strong></div><div><small>对话</small><strong>{runs.length} 轮</strong></div><div><small>最近一次</small><strong>{runs[0] ? `${RUN_STATUS[runs[0].status] || runs[0].status} · ${runDuration(runs[0])}` : '尚未派出'}</strong></div></div>
           {selected.record_id && <a href={`#records/${selected.record_id}`}>查看来源记录 →</a>}
           <Conversation task={selected} runs={runs} agents={agents} />
           <Changes artifacts={artifacts} />

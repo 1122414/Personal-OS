@@ -120,6 +120,12 @@ def make_handler(store: Store, static_root: Path):
                 except ValueError as exc:
                     self._json(400, {"error": str(exc)})
                 return
+            if route == "/api/agent_models":
+                try:
+                    self._json(200, store.agent_models(parse_qs(urlparse(self.path).query).get("runtime", [""])[0]))
+                except ValueError as exc:
+                    self._json(400, {"error": str(exc)})
+                return
             if route == "/api/history":
                 try:
                     day = parse_qs(urlparse(self.path).query).get("date", [local_day()])[0]

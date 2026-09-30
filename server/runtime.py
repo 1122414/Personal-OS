@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -30,6 +31,35 @@ SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 OUTSIDE_LIMIT = 50
 TRANSCRIPT_ENTRIES = 300
 TRANSCRIPT_TEXT = 20000
+MODEL_CACHE_SECONDS = 600
+_model_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
+
+def model_name(value: Any) -> str:
+    """Empty means the CLI's own default; anything else goes to the model flag as one argument."""
+    value = str(value or "").strip()
+    if value and (len(value) > 100 or not re.fullmatch(r"[A-Za-z0-9][\w.:/@\[\]+-]*", value)):
+        raise ValueError("模型名称无效")
+    return value
+
+
+def discover_models(runtime: "Runtime", executable: str) -> dict[str, Any]:
+    """Models the CLI offers, cached for a while because some CLIs have to be asked."""
+    key, now = (runtime.id, executable), time.monotonic()
+    cached = _model_cache.get(key)
+    if cached and now - cached[0] < MODEL_CACHE_SECONDS:
+        return cached[1]
+    try:
+        found = runtime.models(executable)
+    except (OSError, ValueError, subprocess.TimeoutExpired, tomllib.TOMLDecodeError):
+        found = {"models": [], "default": ""}
+    _model_cache[key] = (now, found)
+    return found
+
+
+def _cli_output(*command: str) -> str:
+    done = subprocess.run(command, capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+    return done.stdout + done.stderr
 
 
 def resolve_command(value: str) -> str | None:
@@ -129,6 +159,8 @@ class Runtime:
     prompt_in_argv = False
     remote = False
     resumable = False
+    model_flag = ""
+    model_position = 1
 
     @property
     def setting(self) -> str:
@@ -148,11 +180,15 @@ class Runtime:
         """Extra arguments that continue an earlier session of this agent."""
         return []
 
+    def models(self, executable: str) -> dict[str, Any]:
+        """{"models": [{"id", "label"}], "default": id or ""} as far as this machine can tell."""
+        return {"models": [], "default": ""}
+
     def run(self, executable: str, prompt: str, workspace: Path, on_start: Callable[[Any], None],
             on_log: Callable[[str], None], settings: dict[str, Any], external_id: str = "", rerun: bool = False,
             on_external_id: Callable[[str], None] = lambda _: None, session: str = "",
-            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None) -> Outcome:
-        return execute(self, executable, prompt, workspace, on_start, on_log, session, on_transcript)
+            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None, model: str = "") -> Outcome:
+        return execute(self, executable, prompt, workspace, on_start, on_log, session, on_transcript, model)
 
     def progress(self, line: str, state: dict[str, Any]) -> str | None:
         """Turn one stdout line into a log line; may record result/error/external_id in state."""
@@ -164,6 +200,7 @@ class Runtime:
 
 class CodexRuntime(Runtime):
     id, label, binary = "codex", "Codex", "codex"
+    model_flag, model_position = "-m", 2
 
     def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
         return [executable, "exec", "--ephemeral", "--skip-git-repo-check", "-s", "workspace-write",
@@ -172,6 +209,15 @@ class CodexRuntime(Runtime):
     def result(self, state: dict[str, Any], stdout: str, output: Path) -> str:
         return output.read_text(encoding="utf-8") if output.exists() else stdout
 
+    def models(self, executable: str) -> dict[str, Any]:
+        home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        cache = home / "models_cache.json"
+        listed = json.loads(cache.read_text(encoding="utf-8")).get("models", []) if cache.is_file() else []
+        config = home / "config.toml"
+        default = tomllib.loads(config.read_text(encoding="utf-8")).get("model", "") if config.is_file() else ""
+        return {"models": [{"id": m["slug"], "label": m.get("display_name") or m["slug"]} for m in listed
+                           if m.get("slug") and m.get("visibility") != "hide"], "default": default}
+
 
 class KimiRuntime(Runtime):
     """kimi -p stream-json: one JSON message per line; the prompt must be an argument."""
@@ -179,9 +225,15 @@ class KimiRuntime(Runtime):
     state_paths = [".kimi-code/"]
     prompt_in_argv = True
     resumable = True
+    model_flag = "-m"
 
     def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
         return [executable, "--output-format", "stream-json", "-p", prompt]
+
+    def models(self, executable: str) -> dict[str, Any]:
+        config = Path.home() / ".kimi-code" / "config.toml"
+        settings = tomllib.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
+        return {"models": [{"id": name, "label": name} for name in settings.get("models") or {}], "default": settings.get("default_model", "")}
 
     def resume_args(self, session: str) -> list[str]:
         return ["-S", session]
@@ -214,6 +266,7 @@ class ClaudeRuntime(Runtime):
     id, label, binary = "claude", "Claude Code", "claude"
     state_paths = [".claude"]
     resumable = True
+    model_flag = "--model"
 
     def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
         return [executable, "-p", "--output-format", "stream-json", "--verbose",
@@ -221,6 +274,9 @@ class ClaudeRuntime(Runtime):
 
     def resume_args(self, session: str) -> list[str]:
         return ["-r", session]
+
+    def models(self, executable: str) -> dict[str, Any]:
+        return {"models": [{"id": alias, "label": alias} for alias in ("sonnet", "opus", "haiku")], "default": ""}
 
     def progress(self, line: str, state: dict[str, Any]) -> str | None:
         event = _json(line)
@@ -264,6 +320,11 @@ class WorkBuddyRuntime(ClaudeRuntime):
         return [executable, "-p", "--output-format", "stream-json", "--verbose",
                 "--allowedTools", "Bash", "--permission-mode", "acceptEdits"]
 
+    def models(self, executable: str) -> dict[str, Any]:
+        listed = re.search(r"Currently supported: \(([^)]*)\)", _cli_output(executable, "--help"))
+        names = [name.strip() for name in listed.group(1).split(",") if name.strip()] if listed else []
+        return {"models": [{"id": name, "label": name} for name in names], "default": ""}
+
 
 class CursorRuntime(Runtime):
     """cursor-agent -p stream-json: one line per complete message. --force lets it run shell commands; sandbox-exec keeps writes inside the workspace."""
@@ -271,6 +332,7 @@ class CursorRuntime(Runtime):
     state_paths = [".cursor/"]
     prompt_in_argv = True
     resumable = True
+    model_flag = "--model"
 
     def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
         return [executable, "-p", "--output-format", "stream-json", "--force", "--trust",
@@ -278,6 +340,16 @@ class CursorRuntime(Runtime):
 
     def resume_args(self, session: str) -> list[str]:
         return ["--resume", session]
+
+    def models(self, executable: str) -> dict[str, Any]:
+        models, default = [], ""
+        for line in _cli_output(executable, "models").splitlines():
+            found = re.fullmatch(r"(\S+) - (.+)", line.replace("\u200b", "").strip())
+            if found:
+                models.append({"id": found[1], "label": found[2].strip()})
+                if "(default)" in found[2]:
+                    default = found[1]
+        return {"models": models, "default": default}
 
     def progress(self, line: str, state: dict[str, Any]) -> str | None:
         event = _json(line)
@@ -366,7 +438,7 @@ class MulticaRuntime(Runtime):
             return None
         return resolve_command(settings.get(self.setting) or "")
 
-    def run(self, executable, prompt, workspace, on_start, on_log, settings, external_id="", rerun=False, on_external_id=lambda _: None, session="", on_transcript=lambda _: None):
+    def run(self, executable, prompt, workspace, on_start, on_log, settings, external_id="", rerun=False, on_external_id=lambda _: None, session="", on_transcript=lambda _: None, model=""):
         base = [executable, *(["--profile", settings["multica_profile"]] if settings.get("multica_profile") else [])]
         handle = MulticaHandle(base)
         handle.issue = external_id
@@ -449,13 +521,15 @@ RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime
 
 def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,
             on_start: Callable[[Any], None], on_log: Callable[[str], None], session: str = "",
-            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None) -> Outcome:
+            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None, model: str = "") -> Outcome:
     """Run one agent turn to completion, streaming log lines; never raises for agent failures."""
     workspace = workspace.resolve()
     state: dict[str, Any] = {"workspace": workspace}
     with tempfile.TemporaryDirectory(prefix="personal-os-run-") as temp:
         output = Path(temp) / "result.txt"
         command = runtime.command(executable, workspace, output, prompt) + (runtime.resume_args(session) if session else [])
+        if model and runtime.model_flag:
+            command[runtime.model_position:runtime.model_position] = [runtime.model_flag, model]
         if runtime.sandboxed:
             if not Path(SANDBOX_EXEC).is_file():
                 return Outcome(False, error=f"本机缺少 sandbox-exec，无法把 {runtime.label} 限制在工作目录内，已拒绝执行")

@@ -169,7 +169,7 @@
 .board-card strong{font-size:12px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .board-card small,.board-log{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.board-log{font:11px/1.45 Menlo,monospace}
 .board-card:hover,.board-card.selected{border-color:var(--accent);background:var(--accent-soft)}.board-more{color:var(--muted);font-size:11px;padding:0 3px}
-.dispatch{display:inline-flex;gap:6px;align-items:center}.dispatch select{width:auto}
+.dispatch{display:inline-flex;gap:6px;align-items:center}.dispatch select{width:auto}.dispatch .model-input{width:210px}
 .run-card+.run-card{margin-top:8px}.run-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.run-card .run-head span{float:none}.run-head span:last-child{margin-left:auto;color:var(--muted)}
 .run-status{padding:2px 7px;border-radius:5px;background:var(--accent-soft);color:var(--accent-strong)}.run-Failed,.run-Interrupted{color:#c44458;background:rgba(248,111,127,.13)}.run-Finished{color:#2b8879;background:rgba(70,177,151,.17)}
 .run-card .notice{margin:8px 0 0}.run-card details{margin-top:8px}.run-card summary{cursor:pointer;color:var(--muted)}

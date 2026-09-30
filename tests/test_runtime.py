@@ -129,6 +129,50 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual((run["message"], run["resumed"], run["status"]), ("再加个测试", True, "Finished"))
         self.assertEqual(self.store.get("task", self.task["id"])["status"], "Review")
 
+    def test_chosen_model_goes_to_every_turn_and_is_cleared_when_the_runtime_changes(self):
+        commands = []
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                commands.append(self.command)
+                return lines({"session": "s-1", "result": "好了"}), "", 0
+
+        with patch.object(FakeRuntime, "model_flag", "--model"):
+            run = self.wait_run(self.start(Process, model="m-1")["id"])
+            self.assertEqual((run["model"], self.store.get("task", self.task["id"])["model"]), ("m-1", "m-1"))
+            self.wait_run(self.store.action("send_agent_message", {"task_id": self.task["id"], "text": "再改改"})["id"])
+        self.assertEqual([c[1:3] for c in commands], [["--model", "m-1"], ["--model", "m-1"]])
+        self.assertEqual(commands[1][-2:], ["--resume", "s-1"])
+        other = self.store.action("create_task", {"title": "另一件", "project_id": self.task["project_id"], "runtime": "cursor", "model": "gpt-5.2"})
+        self.assertEqual(other["model"], "gpt-5.2")
+        with self.assertRaisesRegex(ValueError, "模型名称无效"):
+            self.store.action("update_task", {"id": other["id"], "model": "--dangerously-skip"})
+        self.assertEqual(self.store.action("update_task", {"id": other["id"], "runtime": "kimi"})["model"], "")
+        self.assertEqual(self.store.action("update_task", {"id": other["id"], "runtime": "claude", "model": "opus"})["model"], "opus")
+
+    def test_codex_model_flag_follows_the_exec_subcommand(self):
+        seen = {}
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                seen["command"] = self.command
+                return "", "", 0
+
+        with patch("server.runtime.subprocess.Popen", Process):
+            execute(RUNTIMES["codex"], "/bin/codex", "做事", self.workspace, lambda _: None, lambda _: None, model="gpt-x")
+        self.assertEqual(seen["command"][:4], ["/bin/codex", "exec", "-m", "gpt-x"])
+
+    def test_models_are_read_from_cursor_and_workbuddy_output(self):
+        cursor = "Available models\n\nauto - Auto (default)\ngpt-5.2 - GPT-5.2\ngrok-4.7-low-fast - Grok 4.7 Low Fast\u200b\u200b\n"
+        with patch("server.runtime._cli_output", return_value=cursor):
+            found = RUNTIMES["cursor"].models("/bin/cursor-agent")
+        self.assertEqual(found["default"], "auto")
+        self.assertEqual([m["id"] for m in found["models"]], ["auto", "gpt-5.2", "grok-4.7-low-fast"])
+        self.assertEqual(found["models"][2]["label"], "Grok 4.7 Low Fast")
+        help_text = "  --model <model>  Model for the current session. Currently supported: (glm-5.1-ioa, gpt-5.4)\n"
+        with patch("server.runtime._cli_output", return_value=help_text):
+            self.assertEqual([m["id"] for m in RUNTIMES["workbuddy"].models("/bin/codebuddy")["models"]], ["glm-5.1-ioa", "gpt-5.4"])
+
     def test_lost_session_falls_back_to_a_new_one_that_carries_the_conversation(self):
         self.first_turn()
         attempts = []
