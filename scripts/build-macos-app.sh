@@ -21,7 +21,7 @@ cp server/*.py "$app/Contents/Resources/runtime/server/"
 
 swiftc -parse-as-library -swift-version 5 -O \
   -module-cache-path "$project_root/build/swift-module-cache" \
-  -sdk "$sdk" -framework AppKit -framework WebKit \
+  -sdk "$sdk" -framework AppKit -framework WebKit -framework UserNotifications \
   desktop/PersonalOSApp.swift -o "$app/Contents/MacOS/PersonalOS"
 
 swiftc -parse-as-library -swift-version 5 -O \

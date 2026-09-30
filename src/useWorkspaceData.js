@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { action, loadRunningRuns, loadState } from './api.js'
-import { mergeRunningRuns } from './liveRuns.js'
+import { agentNotices, mergeRunningRuns } from './liveRuns.js'
 import { createWorkspaceRequests } from './workspaceRequests.js'
 
 export default function useWorkspaceData(onError) {
@@ -17,6 +17,13 @@ export default function useWorkspaceData(onError) {
   const hasRunningAgent = !!data?.agent_runs?.some(item => item.status === 'Running')
   const latest = useRef(data)
   latest.current = data
+  const noticed = useRef(null)
+
+  useEffect(() => {
+    const notify = window.webkit?.messageHandlers?.notify
+    if (notify && data) agentNotices(noticed.current, data).forEach(notice => notify.postMessage(notice))
+    noticed.current = data
+  }, [data])
 
   useEffect(() => {
     let mounted = true

@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import WebKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 @main
 struct PersonalOSMain {
@@ -14,7 +15,8 @@ struct PersonalOSMain {
     }
 }
 
-final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate,
+                             WKScriptMessageHandler, UNUserNotificationCenterDelegate {
     private var window: NSWindow!
     private var webView: WKWebView?
     private var server: Process?
@@ -31,6 +33,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelega
             NSApp.applicationIconImage = image
         }
         installMenus()
+        UNUserNotificationCenter.current().delegate = self
         let frame = NSRect(x: 0, y: 0, width: 1380, height: 860)
         window = NSWindow(contentRect: frame,
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -121,7 +124,18 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelega
         window.contentView = background
     }
 
+    /// Set only for test instances, so they never touch the real database.
+    private var dataDirectoryOverride: String? {
+        let value = ProcessInfo.processInfo.environment["PERSONAL_OS_DATA_DIR"] ?? ""
+        return value.isEmpty ? nil : value
+    }
+
     private func applicationSupport() throws -> URL {
+        if let override = dataDirectoryOverride {
+            let directory = URL(fileURLWithPath: override, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return directory
+        }
         let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let directory = root.appendingPathComponent("Personal OS", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -169,7 +183,8 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelega
             process.currentDirectoryURL = runtime
             process.arguments = ["-u", "-m", "server.app", "--port", "0", "--db", database.path,
                                  "--ready-file", ready.path]
-            if let old = Bundle.main.object(forInfoDictionaryKey: "PersonalOSLegacyDataPath") as? String,
+            if dataDirectoryOverride == nil,
+               let old = Bundle.main.object(forInfoDictionaryKey: "PersonalOSLegacyDataPath") as? String,
                FileManager.default.fileExists(atPath: old) {
                 process.arguments! += ["--migrate-from", old]
             }
@@ -218,6 +233,7 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelega
     private func showWebView(at url: URL) {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        configuration.userContentController.add(self, name: "notify")
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -278,6 +294,36 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelega
         panel.allowedContentTypes = [.pdf, .png, .jpeg, .gif, .webP]
         panel.beginSheetModal(for: window) { response in
             completionHandler(response == .OK ? panel.urls : nil)
+        }
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "notify", !NSApp.isActive,
+              let body = message.body as? [String: Any],
+              let title = body["title"] as? String, let text = body["body"] as? String else { return }
+        let taskId = body["taskId"] as? String ?? ""
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = text
+            content.sound = .default
+            content.userInfo = ["taskId": taskId]
+            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let taskId = response.notification.request.content.userInfo["taskId"] as? String ?? ""
+        DispatchQueue.main.async { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.window.makeKeyAndOrderFront(nil)
+            if taskId.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil {
+                self?.webView?.evaluateJavaScript("location.hash = 'tasks/\(taskId)'")
+            }
+            completionHandler()
         }
     }
 

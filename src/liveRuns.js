@@ -7,3 +7,16 @@ export function mergeRunningRuns(data, runs) {
   const stale = data.agent_runs.some(run => run.status === 'Running' && !live.has(run.id)) || runs.some(run => !known.has(run.id))
   return { data: { ...data, agent_runs: data.agent_runs.map(run => live.get(run.id) || run) }, stale }
 }
+
+// Turns that ended between two snapshots and need the user. Canceled or interrupted turns were the user's own doing.
+export function agentNotices(previous, next) {
+  if (!previous || !next) return []
+  const before = new Map(previous.agent_runs.map(run => [run.id, run.status]))
+  return next.agent_runs.filter(run => before.get(run.id) === 'Running' && ['Finished', 'Failed'].includes(run.status)).map(run => {
+    const task = next.tasks.find(item => item.id === run.task_id)
+    const agent = run.agent_id || 'Agent'
+    const body = run.status === 'Failed' ? `${agent} 执行失败：${(run.error || '').split('\n')[0].slice(0, 120) || '请查看日志'}`
+      : run.needs_reply ? `${agent} 在等你回复` : `${agent} 这一轮做完了，待验收`
+    return { taskId: run.task_id, title: task?.title || 'Agent 任务', body }
+  })
+}
