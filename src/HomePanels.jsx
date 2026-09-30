@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { action } from './api.js'
-import { Button, Empty, Modal, Panel, dateLabel, timeLabel } from './ui.jsx'
+import { Button, CollapseTitle, Empty, Modal, Panel, dateLabel, timeLabel, useCollapsed } from './ui.jsx'
 
 const HOME_STATUS = { active: '进行中', paused: '已暂停', done: '已完成' }
 
@@ -94,13 +94,10 @@ function NextTodo({ item, run, navigate }) {
   return <p className="home-next-action"><button className="text-link" onClick={() => run('create_todo', { title: item.home_next.slice(0, 200), today: true, home_item_note: item.note, home_next_snapshot: item.home_next })}>→ 今天做</button></p>
 }
 
-const COLLAPSE_KEY = 'personal-os.home-items-collapsed'
-
 export function HomeItems({ data, run, refresh, navigate }) {
   const home = data.home_items || { configured: false, items: [], errors: [] }
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === '1')
-  const toggle = () => setCollapsed(value => { localStorage.setItem(COLLAPSE_KEY, value ? '0' : '1'); return !value })
-  const title = <button className="panel-toggle" aria-expanded={!collapsed} onClick={toggle}>阶段事项<span aria-hidden="true">{collapsed ? '▸' : '▾'}</span></button>
+  const [collapsed, toggle] = useCollapsed('personal-os.home-items-collapsed')
+  const title = <CollapseTitle collapsed={collapsed} onToggle={toggle}>阶段事项</CollapseTitle>
   if (!home.configured) return <Panel title="阶段事项" className="home-items"><Empty title="读取 Obsidian 首页的事项" detail={home.errors[0] || '在设置中配置 Obsidian vault 后显示。'} action={<Button onClick={() => navigate('settings')}>打开设置</Button>} /></Panel>
   const current = home.items.filter(item => item.home_status !== 'done')
   const finished = home.items.length - current.length

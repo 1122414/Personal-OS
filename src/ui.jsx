@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 const ICONS = {
   today: <><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9v12h14V9" /><path d="M10 21v-6h4v6" /></>,
@@ -41,6 +41,16 @@ export function taskState(task, runs) {
 
 export function Button({ children, variant = 'secondary', className = '', ...rest }) {
   return <button className={`button ${variant} ${className}`} {...rest}>{children}</button>
+}
+
+export function useCollapsed(key) {
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(key) === '1')
+  const toggle = () => setCollapsed(value => { localStorage.setItem(key, value ? '0' : '1'); return !value })
+  return [collapsed, toggle]
+}
+
+export function CollapseTitle({ collapsed, onToggle, children }) {
+  return <button className="panel-toggle" aria-expanded={!collapsed} onClick={onToggle}>{children}<span aria-hidden="true">{collapsed ? '▸' : '▾'}</span></button>
 }
 
 export function Panel({ title, action, children, className = '' }) {

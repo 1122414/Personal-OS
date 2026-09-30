@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react'
 import Markdown from '../Markdown.jsx'
-import { Button, Empty, Field, Modal, Panel } from '../ui.jsx'
+import { Button, CollapseTitle, Empty, Field, Modal, Panel, useCollapsed } from '../ui.jsx'
 import { RATINGS, deckOrder, dueLabel, isNewCard, sourceLabel, todayCards } from './cards.js'
 
 function CardForm({ topic, card, run, close }) {
@@ -173,15 +173,18 @@ export function CardRules({ data, run }) {
 
 export function TodayCards({ data, run, navigate }) {
   const [flippedId, setFlippedId] = useState(null)
+  const [collapsed, toggle] = useCollapsed('personal-os.today-cards-collapsed')
   const { busy, error, rate } = useRating(run)
   const topics = Object.fromEntries((data.learning_topics || []).map(topic => [topic.id, topic]))
   const due = todayCards(data.learning_cards, data.today).filter(card => topics[card.topic_id])
   const card = due[0]
+  const title = <CollapseTitle collapsed={collapsed} onToggle={toggle}>今日学习</CollapseTitle>
   const action = <button className="text-link" onClick={() => navigate('learning')}>学习 →</button>
   if (!data.learning_topics?.length) return <Panel title="今日学习" action={action} className="today-cards"><p className="muted">在「学习」里建一个主题，写卡片或让 AI 每天推送。</p></Panel>
-  if (!card) return <Panel title="今日学习" action={action} className="today-cards"><p className="muted">今天的卡片都学完了。</p></Panel>
+  if (collapsed) return <Panel title={title} action={<small>{card ? `还剩 ${due.length} 张` : '今天学完了'}</small>} className="today-cards collapsed" />
+  if (!card) return <Panel title={title} action={action} className="today-cards"><p className="muted">今天的卡片都学完了。</p></Panel>
   const flipped = flippedId === card.id
-  return <Panel title="今日学习" action={<span className="panel-tools"><small>还剩 {due.length} 张</small><button className="text-link" onClick={() => navigate('learning', card.topic_id)}>{topics[card.topic_id].title} →</button></span>} className="today-cards">
+  return <Panel title={title} action={<span className="panel-tools"><small>还剩 {due.length} 张</small><button className="text-link" onClick={() => navigate('learning', card.topic_id)}>{topics[card.topic_id].title} →</button></span>} className="today-cards">
     <Flashcard card={card} flipped={flipped} onFlip={() => setFlippedId(flipped ? null : card.id)} label={isNewCard(card) ? '新卡片' : '复习'} />
     {flipped && <RatingRow busy={busy} onRate={async rating => { if (await rate(card, rating)) setFlippedId(null) }} />}
     {error && <p className="inline-error" role="alert">{error}</p>}
