@@ -57,7 +57,7 @@ open 'build/Personal OS.app'
 | Kimi | `kimi -p --output-format stream-json`，接着说时加 `-S <会话编号>`（已验证 2.1.1） | macOS `sandbox-exec` 只允许写工作目录、`~/.kimi-code/`、`/tmp` 和系统临时目录 | 本机真实派单与多轮续接已验证 |
 | Claude Code | `claude -p --output-format stream-json`，自动接受编辑并允许 Bash，接着说时加 `-r <会话编号>`（2.1.199） | 同上，状态目录为 `~/.claude*` | 本机模型服务余额不足，待实测 |
 | Cursor | `cursor-agent -p --output-format stream-json --force --trust --sandbox disabled`，接着说时加 `--resume <会话编号>`（2026.09.28，需先 `cursor-agent login`） | 同上，状态目录为 `~/.cursor/`（Cursor 自带沙箱关闭，避免与外层 `sandbox-exec` 嵌套） | 本机真实派单、多轮续接、越界写入被拦截已验证 |
-| WorkBuddy | 自带的 CodeBuddy CLI（`/Applications/WorkBuddy.app/.../cli/bin/codebuddy`，2.156.0），参数同 Claude Code；它是 node 脚本，客户端用 WorkBuddy 自带的 Electron 运行（`ELECTRON_RUN_AS_NODE=1`），不依赖本机装 node | 同上，状态目录为 `~/.codebuddy` | 需先在终端运行该命令并输入 `/login`；未登录时会显示「Authentication required」并标为失败。登录后的真实派单待验证 |
+| WorkBuddy | 自带的 CodeBuddy CLI（`/Applications/WorkBuddy.app/.../cli/bin/codebuddy`，2.156.0），参数同 Claude Code；它是 node 脚本，客户端用 WorkBuddy 自带的 Electron 运行（`ELECTRON_RUN_AS_NODE=1`），不依赖本机装 node | 同上，状态目录为 `~/.codebuddy` | 暂不可用：WorkBuddy 只带了无界面版命令行，没有 `/login`，也读不到 WorkBuddy 桌面版的登录，派单会显示「Authentication required」并标为失败。该命令行支持 `CODEBUDDY_API_KEY` 环境变量，客户端尚未接入 |
 | Codex | `codex exec -s workspace-write` | Codex 自带的工作区写入沙箱 | 客户端使用 Codex 桌面版（ChatGPT.app）自带的 codex-cli，本机真实派单已验证；终端 PATH 中没有 |
 | Multica | 见下文 | 由 Multica 执行环境决定 | 未在真实服务端验证 |
 
