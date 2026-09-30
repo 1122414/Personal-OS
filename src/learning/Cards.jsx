@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react'
 import Markdown from '../Markdown.jsx'
 import { Button, Empty, Field, Modal, Panel } from '../ui.jsx'
-import { RATINGS, dueLabel, isNewCard, sourceLabel, todayCards } from './cards.js'
+import { RATINGS, deckOrder, dueLabel, isNewCard, sourceLabel, todayCards } from './cards.js'
 
 function CardForm({ topic, card, run, close }) {
   const [busy, setBusy] = useState(false)
@@ -18,11 +18,53 @@ function CardForm({ topic, card, run, close }) {
   </form></Modal>
 }
 
-function PushSettings({ topic, data, run }) {
+function Flashcard({ card, flipped, onFlip, label }) {
+  return <div className={`flashcard ${flipped ? 'flipped' : ''}`} role="button" tabIndex={0} aria-label={flipped ? '翻回正面' : '翻面看答案'}
+    onClick={onFlip} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onFlip() } }}>
+    <div className="flashcard-inner">
+      <div className="flashcard-face flashcard-front" aria-hidden={flipped}>
+        <small className="flashcard-label">{label}</small>
+        <strong>{card.front}</strong>
+        <span className="flashcard-hint">点击翻面看答案</span>
+      </div>
+      <div className="flashcard-face flashcard-back" aria-hidden={!flipped}>
+        <small className="flashcard-label">答案</small>
+        <div className="flashcard-answer">{card.back ? <Markdown text={card.back} /> : <p className="muted">背面还没写。</p>}</div>
+        {card.basis && <small className="flashcard-basis">依据：{card.basis}</small>}
+      </div>
+    </div>
+  </div>
+}
+
+function useRating(run) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function rate(card, rating) {
+    setBusy(true); setError('')
+    try {
+      await run('review_card', { id: card.id, rating }, { quiet: true })
+      return true
+    } catch (failure) {
+      setError(failure.message)
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+  return { busy, error, rate }
+}
+
+function RatingRow({ busy, onRate }) {
+  return <div className="rating-row">{RATINGS.map(([rating, label]) => <Button key={rating} disabled={busy} variant={rating === 'remembered' ? 'primary' : 'secondary'} onClick={() => onRate(rating)}>{label}</Button>)}</div>
+}
+
+function PushSettings({ topic, data, run, openMaterials }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const engines = (data.runtime?.agents || []).filter(agent => !agent.remote)
   const engine = topic.card_engine || 'codex'
+  const excluded = new Set(topic.card_excluded_record_ids || [])
+  const references = topic.record_ids.filter(id => !excluded.has(id) && data.records.some(record => record.id === id)).length
   const set = fields => { setError(''); run('set_card_push', { id: topic.id, ...fields }, { quiet: true }).catch(failure => setError(failure.message)) }
   async function generate() {
     setBusy(true); await run('generate_cards', { topic_id: topic.id }); setBusy(false)
@@ -32,38 +74,72 @@ function PushSettings({ topic, data, run }) {
     <select aria-label="每天张数" value={topic.daily_count || 3} onChange={event => set({ daily_count: Number(event.target.value) })}>{Array.from({ length: 10 }, (_, index) => index + 1).map(count => <option key={count} value={count}>每天 {count} 张</option>)}</select>
     <select aria-label="生成通道" value={engine} onChange={event => set({ card_engine: event.target.value })}>{engines.map(agent => <option key={agent.id} value={agent.id}>{agent.label}{agent.available ? '' : '（本机未找到）'}</option>)}</select>
     <Button onClick={generate} disabled={busy}>{busy ? '正在生成…' : `现在生成 ${topic.daily_count || 3} 张`}</Button>
-    <small className="muted">{topic.push_enabled ? '每天 8 点后客户端开着时自动生成一次' : '开启后每天自动生成'}{topic.last_push_date ? ` · 上次推送 ${topic.last_push_date}` : ''}{data.settings?.obsidian_vault ? ' · 当天新卡片写入 Obsidian「学习卡片」' : ' · 配置 Obsidian 后会同步写入'}</small>
+    <small className="muted">
+      <button className="text-link" onClick={openMaterials}>{references ? `参考 ${references} 份资料` : '还没有参考资料，去上传'}</button>
+      {data.settings?.card_rules ? ' + 通用参考' : ''}
+      {topic.push_enabled ? ' · 每天 8 点后客户端开着时自动生成一次' : ''}{topic.last_push_date === data.today ? ' · 今天已推送' : ''}
+      {data.settings?.obsidian_vault ? ' · 写入 Obsidian「学习卡片」' : ''}
+    </small>
     {error && <p className="inline-error" role="alert">{error}</p>}
     {topic.last_push_error && <p className="inline-error" role="alert">上次生成失败：{topic.last_push_error}</p>}
   </div>
 }
 
-function CardRow({ card, today, run, edit }) {
+function CardRow({ card, today, run, edit, show }) {
   async function remove() {
     if (window.confirm(`删除卡片「${card.front.slice(0, 40)}」？删除后无法恢复。`)) await run('delete_card', { id: card.id })
   }
-  return <article className="study-row">
-    <details><summary><strong>{card.front}</strong></summary>{card.back ? <Markdown text={card.back} /> : <p className="muted">背面还没写。</p>}</details>
-    <div className="study-row-meta"><small>{sourceLabel(card)} · {dueLabel(card, today)}</small>
-      {card.mastered_at ? <button className="text-link" onClick={() => run('restore_card', { id: card.id })}>恢复复习</button>
-        : <button className="text-link" onClick={() => edit(card)}>编辑</button>}
-      <button className="text-link" onClick={remove}>删除</button>
-    </div>
-  </article>
+  return <div className="study-row">
+    {show ? <button className="study-row-front" onClick={() => show(card)} title="在上面的卡片里查看">{card.front}</button> : <span className="study-row-front">{card.front}</span>}
+    <small>{sourceLabel(card)} · {dueLabel(card, today)}</small>
+    {card.mastered_at ? <button className="text-link" onClick={() => run('restore_card', { id: card.id })}>恢复复习</button>
+      : <button className="text-link" onClick={() => edit(card)}>编辑</button>}
+    <button className="text-link" onClick={remove}>删除</button>
+  </div>
 }
 
-export function CardsTab({ topic, data, run }) {
+export function CardsTab({ topic, data, run, openMaterials }) {
   const [editing, setEditing] = useState(null)
-  const cards = (data.learning_cards || []).filter(card => card.topic_id === topic.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
-  const active = cards.filter(card => !card.mastered_at)
+  const [currentId, setCurrentId] = useState(null)
+  const [flipped, setFlipped] = useState(false)
+  const { busy, error, rate } = useRating(run)
+  const cards = (data.learning_cards || []).filter(card => card.topic_id === topic.id)
+  const deck = deckOrder(cards, data.today)
   const mastered = cards.filter(card => card.mastered_at)
-  const due = todayCards(active, data.today).length
+  const due = todayCards(cards, data.today)
+  const index = Math.max(0, deck.findIndex(card => card.id === currentId))
+  const card = deck[index]
+  const show = next => { setCurrentId(next.id); setFlipped(false) }
+  const step = delta => show(deck[(index + delta + deck.length) % deck.length])
+  async function review(rating) {
+    const next = deck[(index + 1) % deck.length]
+    if (await rate(card, rating)) show(next)
+  }
+  async function remove() {
+    if (window.confirm(`删除卡片「${card.front.slice(0, 40)}」？删除后无法恢复。`) && await run('delete_card', { id: card.id })) setFlipped(false)
+  }
+  const isDue = card && due.some(item => item.id === card.id)
   return <div className="cards-tab">
-    <PushSettings topic={topic} data={data} run={run} />
-    <div className="cards-heading"><span>{active.length} 张在复习{due ? ` · 今天 ${due} 张` : ''}{mastered.length ? ` · 已掌握 ${mastered.length}` : ''}</span><Button variant="primary" onClick={() => setEditing('new')}>＋ 写一张卡片</Button></div>
-    {active.length ? active.map(card => <CardRow key={card.id} card={card} today={data.today} run={run} edit={setEditing} />)
-      : <Empty title="还没有卡片" detail="自己写一张，或让 AI 按主题目标现在生成。" />}
-    {mastered.length > 0 && <details className="cards-mastered"><summary>已掌握 · {mastered.length}</summary>{mastered.map(card => <CardRow key={card.id} card={card} today={data.today} run={run} edit={setEditing} />)}</details>}
+    <PushSettings topic={topic} data={data} run={run} openMaterials={openMaterials} />
+    {card ? <section className="deck">
+      <div className="deck-meta">
+        <span>{deck.length} 张在复习{due.length ? ` · 今天 ${due.length} 张` : ''}{mastered.length ? ` · 已掌握 ${mastered.length}` : ''}</span>
+        <Button variant="primary" onClick={() => setEditing('new')}>＋ 写一张卡片</Button>
+      </div>
+      <Flashcard card={card} flipped={flipped} onFlip={() => setFlipped(!flipped)} label={`${isNewCard(card) ? '新卡片' : '复习'} · ${dueLabel(card, data.today)} · ${sourceLabel(card)}`} />
+      {flipped && isDue && <RatingRow busy={busy} onRate={review} />}
+      {error && <p className="inline-error" role="alert">{error}</p>}
+      <div className="deck-nav">
+        <button className="deck-arrow" onClick={() => step(-1)} disabled={deck.length < 2} aria-label="上一张">‹</button>
+        <span>{index + 1} / {deck.length}</span>
+        <button className="deck-arrow" onClick={() => step(1)} disabled={deck.length < 2} aria-label="下一张">›</button>
+        <span className="deck-tools"><button className="text-link" onClick={() => setEditing(card)}>编辑</button><button className="text-link" onClick={remove}>删除</button></span>
+      </div>
+    </section> : <Empty title={mastered.length ? '卡片都掌握了' : '还没有卡片'} detail="上传资料后让 AI 生成，或自己写一张。" action={<Button variant="primary" onClick={() => setEditing('new')}>＋ 写一张卡片</Button>} />}
+    {cards.length > 0 && <details className="cards-manage"><summary>管理全部卡片 · {cards.length}</summary>
+      {deck.map(item => <CardRow key={item.id} card={item} today={data.today} run={run} edit={setEditing} show={show} />)}
+      {mastered.length > 0 && <><p className="cards-manage-label">已掌握 · {mastered.length}</p>{mastered.map(item => <CardRow key={item.id} card={item} today={data.today} run={run} edit={setEditing} />)}</>}
+    </details>}
     {editing && <CardForm topic={topic} card={editing === 'new' ? null : editing} run={run} close={() => setEditing(null)} />}
   </div>
 }
@@ -96,35 +172,18 @@ export function CardRules({ data, run }) {
 }
 
 export function TodayCards({ data, run, navigate }) {
-  const [revealed, setRevealed] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [flippedId, setFlippedId] = useState(null)
+  const { busy, error, rate } = useRating(run)
   const topics = Object.fromEntries((data.learning_topics || []).map(topic => [topic.id, topic]))
   const due = todayCards(data.learning_cards, data.today).filter(card => topics[card.topic_id])
   const card = due[0]
-  async function rate(rating) {
-    setBusy(true); setError('')
-    try {
-      await run('review_card', { id: card.id, rating }, { quiet: true })
-      setRevealed(null)
-    } catch (failure) {
-      setError(failure.message)
-    }
-    setBusy(false)
-  }
   const action = <button className="text-link" onClick={() => navigate('learning')}>学习 →</button>
   if (!data.learning_topics?.length) return <Panel title="今日学习" action={action} className="today-cards"><p className="muted">在「学习」里建一个主题，写卡片或让 AI 每天推送。</p></Panel>
   if (!card) return <Panel title="今日学习" action={action} className="today-cards"><p className="muted">今天的卡片都学完了。</p></Panel>
-  const open = revealed === card.id
-  return <Panel title="今日学习" action={<small>还剩 {due.length} 张</small>} className="today-cards">
-    <article className="study-card">
-      <small className="muted">{isNewCard(card) ? '新卡片' : '复习'} · <button className="text-link" onClick={() => navigate('learning', card.topic_id)}>{topics[card.topic_id].title}</button></small>
-      <strong>{card.front}</strong>
-      {open ? <>
-        <div className="study-card-back">{card.back ? <Markdown text={card.back} /> : <p className="muted">背面还没写。</p>}</div>
-        <div className="rating-row">{RATINGS.map(([rating, label]) => <Button key={rating} disabled={busy} variant={rating === 'remembered' ? 'primary' : 'secondary'} onClick={() => rate(rating)}>{label}</Button>)}</div>
-      </> : <Button onClick={() => setRevealed(card.id)}>看答案</Button>}
-      {error && <p className="inline-error" role="alert">{error}</p>}
-    </article>
+  const flipped = flippedId === card.id
+  return <Panel title="今日学习" action={<span className="panel-tools"><small>还剩 {due.length} 张</small><button className="text-link" onClick={() => navigate('learning', card.topic_id)}>{topics[card.topic_id].title} →</button></span>} className="today-cards">
+    <Flashcard card={card} flipped={flipped} onFlip={() => setFlippedId(flipped ? null : card.id)} label={isNewCard(card) ? '新卡片' : '复习'} />
+    {flipped && <RatingRow busy={busy} onRate={async rating => { if (await rate(card, rating)) setFlippedId(null) }} />}
+    {error && <p className="inline-error" role="alert">{error}</p>}
   </Panel>
 }

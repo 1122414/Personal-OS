@@ -31,7 +31,7 @@ function TopicWorkspace({ topic, data, run, navigate }) {
 
   let content = <Empty title="正在读取对话…" />
   if (tab === 'cards') {
-    content = <CardsTab topic={topic} data={data} run={run} />
+    content = <CardsTab topic={topic} data={data} run={run} openMaterials={() => setTab('materials')} />
   } else if (detail && tab === 'summary') {
     content = <LearningSummary topic={current} detail={detail} data={data} run={run} reload={reload} setTab={setTab} />
   } else if (detail && tab === 'chat') {
