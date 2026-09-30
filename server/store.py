@@ -53,8 +53,8 @@ DEFAULT_SETTINGS = {
 RUN_LOG_LINES = 40
 RUN_LOG_LINE_LIMIT = 300
 ASK_MARKER = "【需要你回复】"
-ASK_RULE = f"如果需要用户澄清或做选择才能继续，不要猜测，直接提问（可以列出选项），并在回复最后单独一行写{ASK_MARKER}。"
-FOLLOW_UP_TAIL = "请继续在同一工作目录内完成，最后列出这一轮的实际改动、验证结果和仍需人工审核的事项。" + ASK_RULE
+AGENT_RULE = f"完成后简要说明改了什么、怎么验证的。需要用户决定才能继续时直接提问，不要猜，并在回复最后单独一行写{ASK_MARKER}。"
+FOLLOW_UP_TAIL = "继续在同一工作目录内完成。" + AGENT_RULE
 
 
 def strip_ask_marker(text: str) -> tuple[str, bool]:
@@ -987,14 +987,13 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         message = (p.get("message") or p.get("instruction") or "").strip()
         if len(message) > 4000:
             raise ValueError("消息过长")
-        prompt = f"任务：{task['title']}\n\n描述与完成标准：\n{task.get('description') or task['title']}\n"
-        prompt += "\n请在指定工作目录内完成任务，最后清楚列出实际改动、验证结果和仍需人工审核的事项。" + ASK_RULE
-        context = {
-            "project": {"name": project["name"], "description": project.get("description", ""), "stage": project.get("stage", "")},
-            "active_decisions": [{"title": d["title"], "content": d["content"]} for d in self.all("decision") if d["status"] == "Active" and d.get("project_id") in (None, project["id"])],
-            "personal_rules": [r["text"] for r in self.all("personal_rule") if r["enabled"] and r["category"] in ("Agent", "General")],
-        }
-        prompt += "\n以下是用户明确记录的项目约束与参考规则，请遵守；若与任务矛盾请说明阻塞：\n" + json.dumps(context, ensure_ascii=False)
+        description = (task.get("description") or "").strip()
+        prompt = f"任务：{task['title']}\n" + (f"\n{description}\n" if description and description != task["title"] else "")
+        prompt += "\n" + AGENT_RULE
+        constraints = [f"- {d['title']}：{d['content']}" for d in self.all("decision") if d["status"] == "Active" and d.get("project_id") in (None, project["id"])]
+        constraints += [f"- {r['text']}" for r in self.all("personal_rule") if r["enabled"] and r["category"] in ("Agent", "General")]
+        if constraints:
+            prompt += "\n\n请遵守以下约束，与任务冲突时先提问：\n" + "\n".join(constraints)
         runs = [r for r in self.all("agent_run") if r["task_id"] == task["id"]]
         previous = runs[0] if runs else None
         rerun_id = previous["external_id"] if p.get("rerun") and runtime.remote and previous and previous.get("runtime") == runtime.id and previous.get("external_id") else ""

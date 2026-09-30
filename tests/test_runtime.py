@@ -150,6 +150,25 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.action("update_task", {"id": other["id"], "runtime": "kimi"})["model"], "")
         self.assertEqual(self.store.action("update_task", {"id": other["id"], "runtime": "claude", "model": "opus"})["model"], "opus")
 
+    def test_prompt_is_short_and_only_lists_constraints_that_exist(self):
+        prompts = []
+
+        class Process(FakeAgentProcess):
+            def behave(self, prompt):
+                prompts.append(prompt)
+                return lines({"result": "好"}), "", 0
+
+        self.wait_run(self.start(Process)["id"])
+        self.assertTrue(prompts[0].startswith("任务：派出去\n\n完成后简要说明"))
+        self.assertNotIn("约束", prompts[0])
+        self.assertNotIn("{", prompts[0])
+        self.store.action("update_task", {"id": self.task["id"], "description": "只改 README"})
+        self.store.action("create_rule", {"text": "不要动 lockfile", "category": "Agent"})
+        self.store.action("review_agent", {"task_id": self.task["id"], "choice": "revise", "instruction": "再来"})
+        self.wait_run(self.store.all("agent_run")[0]["id"])
+        self.assertIn("任务：派出去\n\n只改 README\n", prompts[1])
+        self.assertIn("请遵守以下约束，与任务冲突时先提问：\n- 不要动 lockfile", prompts[1])
+
     def test_codex_model_flag_follows_the_exec_subcommand(self):
         seen = {}
 
