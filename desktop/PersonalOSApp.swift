@@ -190,7 +190,8 @@ final class DesktopDelegate: NSObject, NSApplicationDelegate, WKNavigationDelega
             }
             var environment = ProcessInfo.processInfo.environment
             let home = FileManager.default.homeDirectoryForCurrentUser.path
-            let search = ["/Applications/ChatGPT.app/Contents/Resources", "\(home)/.local/bin", "\(home)/.kimi-code/bin",
+            let search = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin",
+                          "/Applications/ChatGPT.app/Contents/Resources", "\(home)/.local/bin", "\(home)/.kimi-code/bin",
                           "\(home)/.pyenv/shims", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
             environment["PATH"] = search.joined(separator: ":") + ":" + (environment["PATH"] ?? "")
             environment["PYTHONDONTWRITEBYTECODE"] = "1"
