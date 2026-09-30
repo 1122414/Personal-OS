@@ -5,7 +5,7 @@ export const RECORD_TYPES = { note: '笔记', idea: '点子', resource: '资料'
 export const materialUrl = material => material.url || `/api/material/${material.id}`
 export const recordDate = item => `${dateLabel(item.created_at)} ${timeLabel(item.created_at)}`
 
-async function filePayload(file) {
+export async function filePayload(file) {
   if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} 超过 20 MB`)
   const base64 = await new Promise((resolve, reject) => {
     const reader = new FileReader()

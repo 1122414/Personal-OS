@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import Markdown from '../Markdown.jsx'
 import { Button, Empty, Field, Modal, Panel } from '../ui.jsx'
 import { RATINGS, dueLabel, isNewCard, sourceLabel, todayCards } from './cards.js'
@@ -66,6 +66,33 @@ export function CardsTab({ topic, data, run }) {
     {mastered.length > 0 && <details className="cards-mastered"><summary>已掌握 · {mastered.length}</summary>{mastered.map(card => <CardRow key={card.id} card={card} today={data.today} run={run} edit={setEditing} />)}</details>}
     {editing && <CardForm topic={topic} card={editing === 'new' ? null : editing} run={run} close={() => setEditing(null)} />}
   </div>
+}
+
+export function CardRules({ data, run }) {
+  const saved = data.settings?.card_rules || ''
+  const [text, setText] = useState(saved)
+  const [open, setOpen] = useState(false)
+  const fileInput = useRef(null)
+  async function importFile(event) {
+    const file = event.target.files[0]
+    event.target.value = ''
+    if (!file) return
+    const content = await file.text()
+    setText(current => `${current.trim()}${current.trim() ? '\n\n' : ''}${content.trim()}`.slice(0, 20000))
+    setOpen(true)
+  }
+  return <Panel className="card-rules" title="通用参考" action={<button className="text-link" onClick={() => setOpen(!open)}>{open ? '收起' : saved ? '查看 / 修改' : '添加'}</button>}>
+    <p className="muted">所有主题生成卡片时都会遵守，比如答题风格、语言、深度、你的背景。{saved ? `当前 ${saved.length} 字。` : '还没有填写。'}</p>
+    {open && <>
+      <textarea rows={8} maxLength={20000} value={text} onChange={event => setText(event.target.value)} placeholder={'例如：\n- 答案先给结论，再给原因和例子\n- 面向后端开发岗面试，深度到能回答追问'} />
+      <div className="card-rules-actions">
+        <Button onClick={() => fileInput.current.click()}>导入 md / txt</Button>
+        <input ref={fileInput} type="file" hidden accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={importFile} />
+        <small className="muted">{text.length} / 20000</small>
+        <Button variant="primary" disabled={text.trim() === saved} onClick={() => run('set_card_rules', { text })}>保存</Button>
+      </div>
+    </>}
+  </Panel>
 }
 
 export function TodayCards({ data, run, navigate }) {

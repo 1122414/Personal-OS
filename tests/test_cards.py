@@ -121,6 +121,32 @@ class CardTests(unittest.TestCase):
         self.assertEqual(len(runtime.calls), 1)
         self.assertEqual([c["front"] for c in self.store.all("learning_card")], ["a"])
 
+    def test_generation_uses_references_rules_and_records_basis(self):
+        link = lambda record: self.store.action("link_record", {"id": self.topic["id"], "record_id": record["id"]})
+        resume = self.store.action("create_record", {"title": "简历.md", "content": "负责订单系统的 Redis 缓存改造", "record_type": "resource"})
+        notes = self.store.action("create_record", {"title": "旧笔记", "content": "不要用这份", "record_type": "resource"})
+        pdf = self.store.action("create_record", {"title": "手册.pdf", "record_type": "resource"})
+        for record in (resume, notes, pdf):
+            link(record)
+        self.store.action("add_material", {"record_id": pdf["id"], "name": "手册.pdf", "base64": "JVBERi0xLjQK"})
+        self.store.action("set_card_source", {"id": self.topic["id"], "record_id": notes["id"], "enabled": False})
+        self.store.action("set_card_rules", {"text": "答案用中文，先给结论"})
+        runtime = FakeRuntime('[{"front": "缓存击穿怎么防？", "back": "互斥锁或逻辑过期", "basis": "简历.md"}]')
+        with self.fake(runtime):
+            result = self.store.action("generate_cards", {"topic_id": self.topic["id"]})
+        prompt = runtime.calls[0][0]
+        self.assertIn("<<<资料：简历.md>>>\n负责订单系统的 Redis 缓存改造", prompt)
+        self.assertIn("答案用中文，先给结论", prompt)
+        self.assertIn("资料外补充", prompt)
+        self.assertNotIn("不要用这份", prompt)
+        self.assertEqual(result["cards"][0]["basis"], "简历.md")
+        self.assertIn("参考了 1 份资料", result["message"])
+        self.assertIn("《手册.pdf》还没有提取文字", result["message"])
+        with self.assertRaisesRegex(ValueError, "尚未关联"):
+            self.store.action("set_card_source", {"id": self.topic["id"], "record_id": "missing", "enabled": True})
+        self.store.action("set_card_source", {"id": self.topic["id"], "record_id": notes["id"], "enabled": True})
+        self.assertEqual(self.store.get("learning_topic", self.topic["id"])["card_excluded_record_ids"], [])
+
     def test_failed_manual_generation_leaves_daily_push_pending(self):
         with self.fake(FakeRuntime(succeeded=False)), self.assertRaises(ValueError):
             self.store.action("generate_cards", {"topic_id": self.topic["id"]})

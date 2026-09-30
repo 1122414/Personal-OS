@@ -245,3 +245,9 @@
 .study-card>small{font-size:11px}
 .study-card-back{max-height:220px;overflow:auto;padding-top:8px;border-top:1px dashed var(--border);font-size:13px}
 .rating-row{display:flex;gap:8px}.rating-row .button{flex:1}
+.card-rules p{margin:0 0 8px;font-size:13px}
+.card-rules textarea{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;color:var(--ink);background:var(--surface-strong);font-size:13px;line-height:1.6;resize:vertical}
+.card-rules-actions{display:flex;align-items:center;gap:8px;margin-top:8px}.card-rules-actions small{flex:1}
+.topic-record-tools{display:inline-flex;align-items:center;gap:10px}
+.card-source-toggle{display:inline-flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap}
+.topic-record-text>summary{cursor:pointer;font-size:13px;color:var(--muted);padding:4px 0}

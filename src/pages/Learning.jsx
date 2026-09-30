@@ -5,7 +5,7 @@ import { Button, Empty, Panel } from '../ui.jsx'
 import { TopicForm, recordDate } from '../workspace.jsx'
 import Conversation from '../learning/Conversation.jsx'
 import TopicMaterials from '../learning/TopicMaterials.jsx'
-import { CardsTab } from '../learning/Cards.jsx'
+import { CardRules, CardsTab } from '../learning/Cards.jsx'
 import { todayCards } from '../learning/cards.js'
 import { useLearningDetail, useLearningDraft } from '../learning/useLearningWorkspace.js'
 
@@ -97,6 +97,7 @@ export default function Learning({ data, run, focus, navigate }) {
             <span>随时回来，接着上次继续。</span>
             <Button variant="primary" onClick={() => setCreating(true)}>＋ 新主题</Button>
           </div>
+          <CardRules data={data} run={run} />
           <Panel className="topic-list">
             {data.learning_topics.length ? data.learning_topics.map(item => (
               <button className="topic-card" key={item.id} onClick={() => navigate('learning', item.id)}>
