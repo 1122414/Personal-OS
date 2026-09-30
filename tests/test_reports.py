@@ -92,6 +92,39 @@ class ReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '相对'):
             self.store.action('save_settings', {'daily_reports_folder': '../elsewhere'})
 
+    def test_finance_and_law_modules_are_read_and_grouped(self):
+        for folder, name in (('每日金融', '金融日报.md'), ('每日法律', '法律日报.md')):
+            (self.vault / folder / self.day).mkdir(parents=True)
+            (self.vault / folder / self.day / name).write_text(f'# {name[:4]}')
+        index = self.store.state()['daily_reports']
+        self.assertEqual([m['name'] for m in index['modules']], ['AI', '金融', '法律'])
+        self.assertEqual([r['module'] for r in index['reports']], ['AI', '金融', '法律'])
+        self.assertEqual(index['errors'], [])
+        law = index['reports'][2]
+        self.assertEqual(read_report(self.settings(), law['path'], '每日法律')['content'], '# 法律日报')
+        self.assertEqual(read_report(self.settings(), law['path'], '每日法律')['id'], law['id'])
+        with self.assertRaisesRegex(ValueError, '已配置'):
+            read_report(self.settings(), law['path'], '私人笔记')
+        handler = object.__new__(make_handler(self.store, self.root))
+        handler.headers = {'Host': '127.0.0.1:8765'}
+        replies = []
+        handler._json = lambda status, value: replies.append((status, value))
+        handler.path = '/api/obsidian/report?module=' + quote('每日金融') + '&path=' + quote(f'{self.day}/金融日报.md')
+        handler.do_GET()
+        self.assertEqual((replies[-1][0], replies[-1][1]['module']), (200, '金融'))
+
+    def test_module_list_is_validated_and_replaces_defaults(self):
+        self.store.action('save_settings', {'daily_reports_folder': '每日AI'})
+        for modules in ([], [{'name': 'AI', 'folder': '/tmp'}], [{'name': '', 'folder': 'a'}], [{'name': 'A', 'folder': 'a'}, {'name': 'A', 'folder': 'b'}]):
+            with self.subTest(modules=modules), self.assertRaises(ValueError):
+                self.store.action('save_settings', {'report_modules': modules})
+        self.store.action('save_settings', {'report_modules': [{'name': ' AI ', 'folder': '每日AI'}, {'name': '周报', 'folder': '每周'}]})
+        index = self.store.state()['daily_reports']
+        self.assertEqual(index['modules'], [{'name': 'AI', 'folder': '每日AI'}, {'name': '周报', 'folder': '每周'}])
+        self.assertEqual(len(index['errors']), 1)
+        self.assertIn('周报', index['errors'][0])
+        self.assertEqual(len(index['reports']), 1)
+
     def test_opacity_persists_and_rejects_invalid_values_without_partial_save(self):
         for value in (-1, 101, 2.5, True, '50', None):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, '透明度'):

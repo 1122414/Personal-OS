@@ -115,8 +115,8 @@ def make_handler(store: Store, static_root: Path):
                 return
             if route == "/api/obsidian/report":
                 try:
-                    relative = parse_qs(urlparse(self.path).query).get("path", [""])[0]
-                    self._json(200, read_report(store.get("settings", "settings"), relative))
+                    query = parse_qs(urlparse(self.path).query)
+                    self._json(200, read_report(store.get("settings", "settings"), query.get("path", [""])[0], query.get("module", [None])[0]))
                 except ValueError as exc:
                     self._json(400, {"error": str(exc)})
                 return

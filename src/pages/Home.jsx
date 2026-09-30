@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Modal, Panel, taskState } from '../ui.jsx'
 import { Capture } from '../workspace.jsx'
 import { RecallCard } from '../PersonalState.jsx'
-import { HomeItems, LastWork, RepoOnboarding } from '../HomePanels.jsx'
+import { HomeItems, RepoOnboarding } from '../HomePanels.jsx'
 import { TodayCards } from '../learning/Cards.jsx'
 import TodayPlan from './Today.jsx'
 
@@ -22,11 +22,17 @@ function Attention({ data, navigate }) {
 
 function HomeStrip({ data, run, navigate }) {
   const [recall, setRecall] = useState(false)
-  const latest = data.daily_reports?.reports.find(item => item.date === data.daily_reports.latest_date)
+  const index = data.daily_reports || { reports: [], modules: [], configured: false }
   const review = data.weekly_review?.items || []
   return <Panel className="home-strip">
-    {latest ? <div className="strip-row"><span className="overline">AI 日报 · {latest.date === data.today ? '今天' : latest.date}</span><button className="strip-title" onClick={() => navigate('intelligence', latest.id)}>{latest.title}</button><button className="text-link" onClick={() => navigate('intelligence')}>阅读全文 →</button></div>
-      : <div className="strip-row"><span className="overline">AI 日报</span><span className="muted">尚未发现成品报告</span><button className="text-link" onClick={() => navigate('settings')}>检查来源 →</button></div>}
+    {index.configured ? (index.modules || []).map(module => {
+      const items = index.reports.filter(item => item.folder === module.folder)
+      const latest = items.filter(item => item.date === items[0]?.date)
+      const label = `${module.name}${/^[A-Za-z]/.test(module.name) ? ' ' : ''}日报`
+      return <div className="strip-row" key={module.folder}><span className="overline">{label}{latest.length ? ` · ${latest[0].date === data.today ? '今天' : latest[0].date}` : ''}</span>
+        {latest.length ? <><button className="strip-title" onClick={() => navigate('intelligence', latest[0].id)}>{latest[0].title}</button>{latest.length > 1 && <button className="text-link" onClick={() => navigate('intelligence', latest[0].id)}>+{latest.length - 1} 篇</button>}</> : <span className="muted">尚未发现报告</span>}
+      </div>
+    }) : <div className="strip-row"><span className="overline">日报</span><span className="muted">尚未配置报告目录</span><button className="text-link" onClick={() => navigate('settings')}>检查来源 →</button></div>}
     {review.length > 0 && <div className="strip-row"><span className="overline">回想</span><button className="strip-title" onClick={() => setRecall(true)}>本周想起 {review.length} 条点子 →</button></div>}
     {recall && <Modal title="本周，想起这些点子" onClose={() => setRecall(false)}>{review.map(item => <RecallCard key={item.record_id} item={item} record={item.record} topicTitle={item.topic_title} run={run} />)}</Modal>}
   </Panel>
@@ -36,9 +42,9 @@ export default function Home({ data, run, open, navigate, refresh }) {
   return <div className="page home-page"><div className="home-scroll">
     <Panel className="home-capture"><Capture compact run={run} /></Panel>
     <Attention data={data} navigate={navigate} />
-    <div className="home-grid">
+    <div className={`home-grid ${data.projects.length ? 'no-last' : ''}`}>
       <TodayPlan data={data} run={run} open={open} navigate={navigate} />
-      {data.projects.length === 0 ? <RepoOnboarding run={run} /> : <LastWork data={data} run={run} />}
+      {data.projects.length === 0 && <RepoOnboarding run={run} />}
       <div className="home-side">
         <TodayCards data={data} run={run} navigate={navigate} />
         <HomeItems data={data} run={run} refresh={refresh} navigate={navigate} />

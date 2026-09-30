@@ -30,7 +30,7 @@ from .daily_report import clean_report, draft_text, report_prompt
 from .cards import CardsMixin, CARD_KINDS, CARD_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
-from .reports import folder_name, report_index
+from .reports import folder_name, module_list, report_index
 from .runtime import RUNTIMES, resolve_command, stop_process
 
 
@@ -780,6 +780,8 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
             item["theme_transparency"] = transparency
         if "daily_reports_folder" in p:
             item["daily_reports_folder"] = folder_name(p["daily_reports_folder"])
+        if "report_modules" in p:
+            item["report_modules"] = module_list(p["report_modules"])
         if "workbuddy_enabled" in p:
             if not isinstance(p["workbuddy_enabled"], bool):
                 raise ValueError("WorkBuddy 开关必须为布尔值")

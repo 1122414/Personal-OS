@@ -288,3 +288,11 @@
 .report-tools{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
 .log-text h2{font-size:15px;margin:14px 0 6px}
 .log-text h2:first-child{margin-top:0}
+.home-grid.no-last{grid-template-areas:"today side" "today side"}
+@media(max-width:650px){.home-grid.no-last{grid-template-areas:"today" "side"}}
+.panel-toggle{display:inline-flex;align-items:center;gap:8px;background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer}
+.panel-toggle span{font-size:.7em;color:var(--muted)}
+.home-side>.home-items.collapsed{flex:none}
+.home-grid .home-items.collapsed .panel-heading{margin-bottom:0}
+.report-module-row{display:grid;grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr) auto;gap:8px;align-items:center;margin:8px 0}
+.home-strip .strip-row>.overline{min-width:8.5em}
