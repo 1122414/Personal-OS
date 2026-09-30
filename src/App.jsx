@@ -12,6 +12,7 @@ import Settings from './pages/Settings.jsx'
 import Records from './pages/Records.jsx'
 import Learning from './pages/Learning.jsx'
 import { StateChip } from './PersonalState.jsx'
+import TodoReminder from './TodoReminder.jsx'
 
 function themeByTime() {
   const hour = new Date().getHours()
@@ -63,7 +64,7 @@ function FormModal({ modal, data, run, close }) {
       operation = editing ? 'update_task' : 'create_task'
       payload = editing ? { ...values, id: item.id } : { ...values, intelligence_id: item.intelligence_id || null, record_id: item.record_id || null }
     } else if (kind === 'todo-edit') {
-      operation = 'update_todo'; payload = { id: item.id, title: values.title, note: values.note, project_id: values.project_id || null }
+      operation = 'update_todo'; payload = { id: item.id, title: values.title, note: values.note, project_id: values.project_id || null, priority: values.priority }
     } else if (kind === 'project' || kind === 'project-edit') {
       operation = editing ? 'update_project' : 'create_project'
       if (editing) payload.id = item.id
@@ -102,6 +103,7 @@ function FormModal({ modal, data, run, close }) {
     {kind === 'todo-edit' && <>
       <Field label="待办"><input name="title" defaultValue={item.title} required autoFocus maxLength={200} /></Field>
       <Field label="备注"><textarea name="note" defaultValue={item.note || ''} rows={4} maxLength={2000} /></Field>
+      <Field label="优先级"><select name="priority" defaultValue={item.priority || 'medium'}><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></Field>
       <Field label="关联项目（可选）"><select name="project_id" defaultValue={item.project_id || ''}><option value="">无</option>{data.projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}</select></Field>
       {item.home_item_note && <p className="muted">来自长线事项：{item.home_item_note}</p>}
       <Button type="button" variant="danger" onClick={async () => { if (window.confirm(`删除待办「${item.title}」？删除后无法恢复。`)) { const result = await run('delete_todo', { id: item.id }); if (result) close() } }}>删除待办</Button>
@@ -195,7 +197,8 @@ export default function App() {
       </>}</main>
     </div>
     {notice && <div className={`toast ${notice.error ? 'error' : ''}`} role="status">{notice.error || notice.message}<button onClick={() => setNotice(null)} aria-label="关闭通知">×</button></div>}
-    {pending && <div className="pending-indicator" role="status">{['generate_brief','generate_project_pulse','summarize_log'].includes(pending) ? '正在整理上下文并生成内容…' : ['refresh_channel','sync_workbuddy'].includes(pending) ? '正在读取信息来源…' : '正在保存…'}</div>}
+    {pending && <div className="pending-indicator" role="status">{['generate_brief','generate_project_pulse','summarize_log','generate_cards'].includes(pending) ? '正在整理上下文并生成内容…' : ['refresh_channel','sync_workbuddy'].includes(pending) ? '正在读取信息来源…' : '正在保存…'}</div>}
     {modal && data && <FormModal modal={modal} data={data} run={run} close={() => setModal(null)} />}
+    {data && !modal && <TodoReminder data={data} run={run} navigate={navigate} />}
   </div>
 }

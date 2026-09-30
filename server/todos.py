@@ -12,7 +12,9 @@ from typing import Any
 from .common import local_day, required_text, stamp, synchronized
 
 TODO_KINDS = ("todo",)
-TODO_ACTIONS = ("create_todo", "update_todo", "toggle_todo", "plan_todo", "archive_todo", "delete_todo", "record_to_todo")
+TODO_ACTIONS = ("create_todo", "update_todo", "toggle_todo", "plan_todo", "move_todo", "archive_todo", "delete_todo", "record_to_todo",
+                "dismiss_todo_reminder")
+PRIORITIES = ("low", "medium", "high")
 
 
 def _same_text(value: Any) -> str:
@@ -25,6 +27,18 @@ def _optional(value: Any, field: str, limit: int) -> str:
     if not isinstance(value, str) or len(value) > limit:
         raise ValueError(f"{field}格式无效或过长")
     return value.strip()
+
+
+def _priority(value: Any) -> str:
+    if value not in PRIORITIES:
+        raise ValueError("优先级无效")
+    return value
+
+
+def todo_order(item: dict[str, Any]) -> tuple:
+    """To-dos from before ordering existed come first by creation time; the rest follow their rank."""
+    rank = item.get("rank")
+    return (rank is not None, rank if rank is not None else 0, item["created_at"])
 
 
 class TodoMixin:
@@ -63,6 +77,8 @@ class TodoMixin:
             "home_item_note": _optional(p.get("home_item_note"), "长线事项", 500) or None,
             "home_next_snapshot": _optional(p.get("home_next_snapshot"), "下一步", 500) or None,
             "record_id": record_id,
+            "priority": _priority(p.get("priority") or "medium"),
+            "rank": max((t["rank"] for t in self.all("todo") if t.get("rank") is not None), default=-1) + 1,
         })
         self.event("TodoCreated", "todo", item["id"], item["project_id"], {"title": item["title"], "today": bool(item["planned_date"])})
         return item
@@ -75,6 +91,8 @@ class TodoMixin:
             item["note"] = _optional(p["note"], "备注", 2000)
         if "project_id" in p:
             item["project_id"] = self._todo_project(p["project_id"])
+        if "priority" in p:
+            item["priority"] = _priority(p["priority"])
         item = self.put("todo", item)
         self.event("TodoUpdated", "todo", item["id"], item["project_id"], {"title": item["title"]})
         return item
@@ -98,9 +116,42 @@ class TodoMixin:
         if item.get("archived_at") or item.get("done_at"):
             raise ValueError("已完成或已归档的待办不能安排")
         item["planned_date"] = local_day() if p.get("today") else None
+        item["rank"] = max((t["rank"] for t in self.all("todo") if t.get("rank") is not None), default=-1) + 1
         item = self.put("todo", item)
         self.event("TodoPlanned", "todo", item["id"], item.get("project_id"), {"title": item["title"], "today": bool(item["planned_date"])})
         return item
+
+    def move_todo(self, p: dict[str, Any]) -> dict[str, Any]:
+        """Drop a to-do into the pool or today, before ``before_id`` (or at the end)."""
+        item = self._existing("todo", p)
+        if item.get("archived_at") or item.get("done_at"):
+            raise ValueError("已完成或已归档的待办不能移动")
+        day = local_day()
+        today = bool(p.get("today"))
+        was_today = bool(item.get("planned_date")) and item["planned_date"] <= day
+        if today != was_today:
+            item["planned_date"] = day if today else None
+        in_column = lambda t: (bool(t.get("planned_date")) and t["planned_date"] <= day) == today
+        column = sorted((t for t in self.all("todo") if t["id"] != item["id"] and not t.get("archived_at") and not t.get("done_at") and in_column(t)),
+                        key=todo_order)
+        before = p.get("before_id")
+        position = next((i for i, t in enumerate(column) if t["id"] == before), len(column))
+        column.insert(position, item)
+        for rank, todo in enumerate(column):
+            if todo is item:
+                item["rank"] = rank
+                item = self.put("todo", item)
+            elif todo.get("rank") != rank:
+                self.put("todo", {**todo, "rank": rank})
+        if today != was_today:
+            self.event("TodoPlanned", "todo", item["id"], item.get("project_id"), {"title": item["title"], "today": today})
+        return item
+
+    def dismiss_todo_reminder(self, p: dict[str, Any]) -> dict[str, Any]:
+        settings = self.get("settings", "settings")
+        settings["todo_reminder_date"] = local_day()
+        self.put("settings", settings)
+        return {"todo_reminder_date": settings["todo_reminder_date"], "message": "今晚不再提醒"}
 
     def archive_todo(self, p: dict[str, Any]) -> dict[str, Any]:
         item = self._existing("todo", p)
@@ -139,7 +190,7 @@ class TodoMixin:
                 continue
             carried = (date.fromisoformat(day) - date.fromisoformat(item["planned_date"])).days if not done_day and item["planned_date"] < day else 0
             result.append({**item, "carried_days": carried})
-        result.sort(key=lambda x: (bool(x.get("done_at")), x.get("done_at") or "", x.get("planned_date") or "", x["created_at"]))
+        result.sort(key=lambda x: (bool(x.get("done_at")), x.get("done_at") or "", *todo_order(x)))
         return result
 
     def today_todos(self) -> list[dict[str, Any]]:

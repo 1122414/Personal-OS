@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from server.store import Store, local_day
+from server.todos import todo_order
 
 
 class TodoTests(unittest.TestCase):
@@ -27,6 +28,55 @@ class TodoTests(unittest.TestCase):
         self.assertEqual(self.store.events()[0]["type"], "TodoDeleted")
         with self.assertRaises(ValueError):
             self.store.action("delete_todo", {"id": todo["id"]})
+
+    def test_priority_defaults_to_medium_and_is_validated(self):
+        todo = self.todo()
+        self.assertEqual(todo["priority"], "medium")
+        self.assertEqual(self.store.action("update_todo", {"id": todo["id"], "priority": "high"})["priority"], "high")
+        for bad in ("urgent", None):
+            with self.assertRaises(ValueError):
+                self.store.action("update_todo", {"id": todo["id"], "priority": bad})
+        with self.assertRaises(ValueError):
+            self.todo(priority="p0")
+
+    def test_drag_reorders_within_and_across_columns(self):
+        a, b, c = self.todo("a"), self.todo("b"), self.todo("c")
+        pool = lambda: [t["title"] for t in sorted((t for t in self.store.all("todo") if not t.get("planned_date")), key=todo_order)]
+        self.store.action("move_todo", {"id": c["id"], "today": False, "before_id": a["id"]})
+        self.assertEqual(pool(), ["c", "a", "b"])
+        self.store.action("move_todo", {"id": c["id"], "today": False, "before_id": None})
+        self.assertEqual(pool(), ["a", "b", "c"])
+        t1, t2 = self.todo("t1", today=True), self.todo("t2", today=True)
+        self.store.action("move_todo", {"id": b["id"], "today": True, "before_id": t2["id"]})
+        self.assertEqual([t["title"] for t in self.store.today_todos()], ["t1", "b", "t2"])
+        self.store.action("move_todo", {"id": t1["id"], "today": False, "before_id": a["id"]})
+        self.assertEqual(pool(), ["t1", "a", "c"])
+        self.store.action("plan_todo", {"id": c["id"], "today": True})
+        self.assertEqual([t["title"] for t in self.store.today_todos()], ["b", "t2", "c"])
+        self.store.action("toggle_todo", {"id": b["id"]})
+        with self.assertRaises(ValueError):
+            self.store.action("move_todo", {"id": b["id"], "today": False})
+
+    def test_reordering_today_keeps_carried_over_date(self):
+        old = self.todo("昨天的", today=True)
+        yesterday = (date.fromisoformat(local_day()) - timedelta(days=1)).isoformat()
+        self.store.put("todo", {**self.store.get("todo", old["id"]), "planned_date": yesterday})
+        fresh = self.todo("今天的", today=True)
+        self.store.action("move_todo", {"id": old["id"], "today": True, "before_id": None})
+        todos = self.store.today_todos()
+        self.assertEqual([t["title"] for t in todos], ["今天的", "昨天的"])
+        self.assertEqual(todos[1]["carried_days"], 1)
+        self.assertEqual(fresh["planned_date"], local_day())
+
+    def test_todos_from_before_ordering_stay_above_new_ones(self):
+        legacy = self.todo("老的", today=True)
+        self.store.put("todo", {key: value for key, value in self.store.get("todo", legacy["id"]).items() if key != "rank"})
+        self.todo("新的", today=True)
+        self.assertEqual([t["title"] for t in self.store.today_todos()], ["老的", "新的"])
+
+    def test_dismissing_the_reminder_marks_today(self):
+        self.store.action("dismiss_todo_reminder", {})
+        self.assertEqual(self.store.state()["settings"]["todo_reminder_date"], local_day())
 
     def test_create_toggle_and_move_between_pool_and_today(self):
         pool = self.todo("池里的")
