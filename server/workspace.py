@@ -17,7 +17,7 @@ from .common import identifier, required_text, stamp, synchronized
 
 WORKSPACE_KINDS = ("record", "material", "learning_topic")
 WORKSPACE_ACTIONS = (
-    "create_record", "update_record", "add_material", "create_learning_topic",
+    "create_record", "update_record", "delete_record", "add_material", "create_learning_topic",
     "update_learning_topic", "link_record", "export_workspace_note",
     "import_obsidian_record",
 )
@@ -134,6 +134,34 @@ class WorkspaceMixin:
         saved = self.put("record", item)
         self.event("RecordUpdated", "record", item["id"], details={"title": item["title"]})
         return saved
+
+    def delete_record(self, p):
+        """Delete a record with its attachments; things made from it stay but lose the source link."""
+        record = self._existing("record", p)
+        for material in self.all("material"):
+            if material["record_id"] == record["id"]:
+                self.db.execute("DELETE FROM material_blobs WHERE id=?", (material["id"],))
+                self.delete("material", material["id"])
+        for topic in self.all("learning_topic"):
+            if record["id"] in topic["record_ids"]:
+                self.link_record({"id": topic["id"], "record_id": record["id"], "remove": True})
+        for kind in ("todo", "task", "personal_state"):
+            for item in self.all(kind):
+                previous = item.get("previous_record_ids") or []
+                if item.get("record_id") != record["id"] and record["id"] not in previous:
+                    continue
+                if item.get("record_id") == record["id"]:
+                    item["record_id"] = None
+                if previous:
+                    item["previous_record_ids"] = [rid for rid in previous if rid != record["id"]]
+                self.put(kind, item)
+        for review in self.all("idea_review"):
+            items = [item for item in review["items"] if item["record_id"] != record["id"]]
+            if items != review["items"]:
+                self.put("idea_review", {**review, "items": items})
+        self.delete("record", record["id"])
+        self.event("RecordDeleted", "record", record["id"], details={"title": record["title"]})
+        return {"deleted": record["id"]}
 
     def add_material(self, p):
         record = self._existing("record", {"id": p.get("record_id")})

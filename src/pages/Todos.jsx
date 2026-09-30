@@ -46,7 +46,7 @@ export default function Todos({ data, run, open }) {
     </Panel>
     <Panel title="已完成" action={<small>{done.length} 件</small>}>
       <div className="panel-body">{done.length ? done.slice(0, 50).map(todo => <TodoRow key={todo.id} todo={todo} run={run} open={open} actions={<><small className="muted">{dateLabel(todo.done_at)}</small>{archive(todo)}</>} />) : <p className="muted">完成的待办会在第二天移到这里。</p>}
-        {archived.length > 0 && <details className="todo-archived"><summary>已归档 · {archived.length}</summary>{archived.map(todo => <TodoRow key={todo.id} todo={todo} run={run} open={open} actions={<button className="text-link" onClick={() => run('archive_todo', { id: todo.id, restore: true }, { quiet: true })}>取消归档</button>} />)}</details>}
+        {archived.length > 0 && <details className="todo-archived"><summary>已归档 · {archived.length}</summary>{archived.map(todo => <TodoRow key={todo.id} todo={todo} run={run} open={open} actions={<><button className="text-link" onClick={() => run('archive_todo', { id: todo.id, restore: true }, { quiet: true })}>取消归档</button><button className="text-link" onClick={() => { if (window.confirm(`删除待办「${todo.title}」？删除后无法恢复。`)) run('delete_todo', { id: todo.id }, { quiet: true }) }}>删除</button></>} />)}</details>}
       </div>
     </Panel>
   </div></div>

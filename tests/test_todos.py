@@ -19,6 +19,15 @@ class TodoTests(unittest.TestCase):
     def todo(self, title="待办", **fields):
         return self.store.action("create_todo", {"title": title, **fields})
 
+    def test_delete_todo_removes_it_everywhere(self):
+        todo, kept = self.todo("要删的", today=True), self.todo("留下的")
+        self.store.action("delete_todo", {"id": todo["id"]})
+        self.assertEqual([t["id"] for t in self.store.all("todo")], [kept["id"]])
+        self.assertEqual(self.store.today_todos(), [])
+        self.assertEqual(self.store.events()[0]["type"], "TodoDeleted")
+        with self.assertRaises(ValueError):
+            self.store.action("delete_todo", {"id": todo["id"]})
+
     def test_create_toggle_and_move_between_pool_and_today(self):
         pool = self.todo("池里的")
         today = self.todo("今天的", today=True, note="  备注  ")

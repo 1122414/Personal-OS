@@ -29,7 +29,12 @@ function RecordDetail({ item, data, run, navigate, open }) {
   const [stateForm, setStateForm] = useState(false)
   const materials = data.materials.filter(material => material.record_id === item.id)
   const topics = data.learning_topics.filter(topic => topic.record_ids.includes(item.id))
-  return <><div className="detail-title"><div><small className="muted">{RECORD_TYPES[item.record_type]} · {recordDate(item)}</small><h2>{item.title}</h2></div><Button onClick={() => setEditing(true)}>编辑</Button></div>
+  async function remove() {
+    const attached = materials.length ? `和它的 ${materials.length} 份资料` : ''
+    if (!window.confirm(`删除「${item.title}」${attached}？删除后无法恢复；由它转成的待办和 Agent 任务会保留。`)) return
+    if (await run('delete_record', { id: item.id })) navigate('records')
+  }
+  return <><div className="detail-title"><div><small className="muted">{RECORD_TYPES[item.record_type]} · {recordDate(item)}</small><h2>{item.title}</h2></div><div className="workspace-actions"><Button onClick={() => setEditing(true)}>编辑</Button><Button variant="danger" onClick={remove}>删除</Button></div></div>
     <Markdown text={item.content} />
     {item.source?.kind === 'obsidian' && <p className="muted">来自 Obsidian：{item.source.path} · 保存时快照，原文件不会同步修改。</p>}
     {item.original_content !== item.content && <details className="original-record"><summary>最初记下的原文</summary><Markdown text={item.original_content} /></details>}

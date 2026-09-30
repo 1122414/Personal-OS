@@ -34,6 +34,33 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(self.store.get("record", record["id"])["content"], content)
         self.assertEqual(self.store.get("record", record["id"])["created_at"], record["created_at"])
 
+    def test_delete_record_removes_attachments_and_unlinks_what_was_made_from_it(self):
+        record, other = self.record(), self.record("另一条")
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+        material = self.store.action("add_material", {"record_id": record["id"], "name": "a.png", "base64": base64.b64encode(png).decode()})
+        topic = self.store.action("create_learning_topic", {"record_id": record["id"]})
+        self.store.action("link_record", {"id": topic["id"], "record_id": other["id"]})
+        todo = self.store.action("record_to_todo", {"id": record["id"]})
+        task = self.store.put("task", {"title": "任务", "status": "Planned", "record_id": record["id"]})
+        state = self.store.put("personal_state", {"text": "状态", "record_id": record["id"], "previous_record_ids": [other["id"], record["id"]]})
+        self.store.put("idea_review", {"week": "2026-W40", "items": [{"record_id": record["id"]}, {"record_id": other["id"]}]})
+
+        self.store.action("delete_record", {"id": record["id"]})
+
+        self.assertIsNone(self.store.get("record", record["id"]))
+        self.assertIsNone(self.store.get("material", material["id"]))
+        with self.assertRaises(ValueError):
+            self.store.material_original(material["id"])
+        self.assertEqual(self.store.get("learning_topic", topic["id"])["record_ids"], [other["id"]])
+        self.assertEqual((self.store.get("todo", todo["id"])["title"], self.store.get("todo", todo["id"])["record_id"]), (todo["title"], None))
+        self.assertIsNone(self.store.get("task", task["id"])["record_id"])
+        self.assertNotIn("previous_record_ids", self.store.get("task", task["id"]))
+        saved_state = self.store.get("personal_state", state["id"])
+        self.assertEqual((saved_state["text"], saved_state["record_id"], saved_state["previous_record_ids"]), ("状态", None, [other["id"]]))
+        self.assertEqual(self.store.all("idea_review")[0]["items"], [{"record_id": other["id"]}])
+        self.assertEqual(self.store.events()[0]["type"], "RecordDeleted")
+        self.assertIsNotNone(self.store.get("record", other["id"]))
+
     def test_A02_topics_keep_stable_record_links_and_edit_conflicts(self):
         record = self.record()
         topic = self.store.action("create_learning_topic", {"record_id": record["id"]})

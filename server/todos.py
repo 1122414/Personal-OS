@@ -12,7 +12,7 @@ from typing import Any
 from .common import local_day, required_text, stamp, synchronized
 
 TODO_KINDS = ("todo",)
-TODO_ACTIONS = ("create_todo", "update_todo", "toggle_todo", "plan_todo", "archive_todo", "record_to_todo")
+TODO_ACTIONS = ("create_todo", "update_todo", "toggle_todo", "plan_todo", "archive_todo", "delete_todo", "record_to_todo")
 
 
 def _same_text(value: Any) -> str:
@@ -110,6 +110,12 @@ class TodoMixin:
         item = self.put("todo", item)
         self.event("TodoRestored" if p.get("restore") else "TodoArchived", "todo", item["id"], item.get("project_id"), {"title": item["title"]})
         return item
+
+    def delete_todo(self, p: dict[str, Any]) -> dict[str, Any]:
+        item = self._existing("todo", p)
+        self.delete("todo", item["id"])
+        self.event("TodoDeleted", "todo", item["id"], item.get("project_id"), {"title": item["title"]})
+        return {"deleted": item["id"]}
 
     def record_to_todo(self, p: dict[str, Any]) -> dict[str, Any]:
         record = self._existing("record", p)
