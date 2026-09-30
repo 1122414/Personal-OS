@@ -93,6 +93,8 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
         self._processes: dict[str, subprocess.Popen] = {}
         self._run_logs: dict[str, list[str]] = {}
         self._log_flushed: dict[str, float] = {}
+        self._run_transcripts: dict[str, list[dict[str, str]]] = {}
+        self._flush_timers: dict[str, threading.Timer] = {}
         self._workers: dict[str, threading.Thread] = {}
         self._stopping = False
         self._active_jobs = 0
@@ -106,6 +108,9 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
     def close(self) -> None:
         with self.lock:
             self._stopping = True
+            for timer in self._flush_timers.values():
+                timer.cancel()
+            self._flush_timers.clear()
             self.stop_learning()
             self.stop_summaries()
             for run in self.all("agent_run"):
@@ -1096,7 +1101,8 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                     self.put("agent_run", current)
 
         log = lambda text: self._agent_log(run_id, text)
-        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, log, self._settings(), external_id, rerun, remember, session=session)
+        live = lambda entries: self._agent_transcript(run_id, entries)
+        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, log, self._settings(), external_id, rerun, remember, session=session, on_transcript=live)
         if session and not outcome.succeeded and not outcome.transcript and not outcome.detached:
             with self.lock:
                 current = self.get("agent_run", run_id)
@@ -1106,10 +1112,14 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
                     self.put("agent_run", current)
             if retry:
                 log("原会话无法续接，已开新会话并附上之前的对话")
-                outcome = runtime.run(executable, fallback_prompt, Path(run["workspace_path"]), started, log, self._settings(), "", False, remember)
+                outcome = runtime.run(executable, fallback_prompt, Path(run["workspace_path"]), started, log, self._settings(), "", False, remember, on_transcript=live)
         with self.lock:
             self._processes.pop(run_id, None)
             self._log_flushed.pop(run_id, None)
+            self._run_transcripts.pop(run_id, None)
+            timer = self._flush_timers.pop(run_id, None)
+            if timer:
+                timer.cancel()
             log_tail = self._run_logs.pop(run_id, None)
             run = self.get("agent_run", run_id)
             if outcome.detached:
@@ -1159,14 +1169,43 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
             lines = self._run_logs.setdefault(run_id, [])
             lines.append(text[:RUN_LOG_LINE_LIMIT])
             del lines[:-RUN_LOG_LINES]
-            now = time.monotonic()
-            if now - self._log_flushed.get(run_id, 0) < 1:
-                return
-            self._log_flushed[run_id] = now
-            run = self.get("agent_run", run_id)
-            if run and run["status"] == "Running":
-                run["log_tail"] = list(lines)
-                self.put("agent_run", run)
+            self._flush_run(run_id)
+
+    def running_agent_runs(self) -> list[dict[str, Any]]:
+        with self.lock:
+            return [{k: v for k, v in run.items() if k != "before_snapshot"} for run in self.all("agent_run") if run["status"] == "Running"]
+
+    def _agent_transcript(self, run_id: str, entries: list[dict[str, str]]) -> None:
+        with self.lock:
+            self._run_transcripts[run_id] = entries
+            self._flush_run(run_id)
+
+    def _flush_run(self, run_id: str, trailing: bool = False) -> None:
+        """Save live log and transcript at most once a second; a trailing save keeps the last step from waiting on the next one."""
+        if trailing:
+            self._flush_timers.pop(run_id, None)
+        if self._stopping or (run_id not in self._run_logs and run_id not in self._run_transcripts):
+            return
+        now = time.monotonic()
+        if not trailing and now - self._log_flushed.get(run_id, 0) < 1:
+            if run_id not in self._flush_timers:
+                timer = threading.Timer(1, self._trailing_flush, (run_id,))
+                timer.daemon = True
+                self._flush_timers[run_id] = timer
+                timer.start()
+            return
+        self._log_flushed[run_id] = now
+        run = self.get("agent_run", run_id)
+        if run and run["status"] == "Running":
+            if run_id in self._run_logs:
+                run["log_tail"] = list(self._run_logs[run_id])
+            if run_id in self._run_transcripts:
+                run["transcript"] = list(self._run_transcripts[run_id])
+            self.put("agent_run", run)
+
+    def _trailing_flush(self, run_id: str) -> None:
+        with self.lock:
+            self._flush_run(run_id, trailing=True)
 
     def cancel_agent(self, p: dict[str, Any]) -> dict[str, Any]:
         run = self._existing("agent_run", p)

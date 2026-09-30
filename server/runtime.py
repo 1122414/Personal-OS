@@ -150,8 +150,9 @@ class Runtime:
 
     def run(self, executable: str, prompt: str, workspace: Path, on_start: Callable[[Any], None],
             on_log: Callable[[str], None], settings: dict[str, Any], external_id: str = "", rerun: bool = False,
-            on_external_id: Callable[[str], None] = lambda _: None, session: str = "") -> Outcome:
-        return execute(self, executable, prompt, workspace, on_start, on_log, session)
+            on_external_id: Callable[[str], None] = lambda _: None, session: str = "",
+            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None) -> Outcome:
+        return execute(self, executable, prompt, workspace, on_start, on_log, session, on_transcript)
 
     def progress(self, line: str, state: dict[str, Any]) -> str | None:
         """Turn one stdout line into a log line; may record result/error/external_id in state."""
@@ -304,7 +305,7 @@ class MulticaRuntime(Runtime):
             return None
         return resolve_command(settings.get(self.setting) or "")
 
-    def run(self, executable, prompt, workspace, on_start, on_log, settings, external_id="", rerun=False, on_external_id=lambda _: None, session=""):
+    def run(self, executable, prompt, workspace, on_start, on_log, settings, external_id="", rerun=False, on_external_id=lambda _: None, session="", on_transcript=lambda _: None):
         base = [executable, *(["--profile", settings["multica_profile"]] if settings.get("multica_profile") else [])]
         handle = MulticaHandle(base)
         handle.issue = external_id
@@ -325,11 +326,11 @@ class MulticaRuntime(Runtime):
                     raise RuntimeError("Multica 没有返回 issue 编号")
                 on_external_id(handle.issue)
                 on_log(f"已创建 Multica issue {(created or {}).get('identifier') or handle.issue}，指派给 {settings['multica_agent']}")
-            return self._follow(base, handle, seen, state, on_log)
+            return self._follow(base, handle, seen, state, on_log, on_transcript)
         except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
             return Outcome(False, error=f"Multica 调用失败：{exc}", external_id=handle.issue)
 
-    def _follow(self, base, handle, seen, state, on_log) -> Outcome:
+    def _follow(self, base, handle, seen, state, on_log, on_transcript=lambda _: None) -> Outcome:
         since, deadline, issue = 0, time.monotonic() + RUN_TIMEOUT, handle.issue
         while True:
             if handle.detached.is_set():
@@ -343,9 +344,12 @@ class MulticaRuntime(Runtime):
                     handle.task, since = str(task.get("id")), 0
                 for message in _items(_multica(base, "issue", "run-messages", handle.task, "--issue", issue, "--since", str(since)), "messages", "data", "items"):
                     since = max(since, int(message.get("seq") or message.get("sequence") or since))
+                    count = len(state.get("transcript") or [])
                     text = self._message(message, state)
                     if text:
                         on_log(text)
+                    if len(state.get("transcript") or []) != count:
+                        on_transcript(list(state["transcript"]))
                 status = str(task.get("status") or "").lower()
                 extra = {"external_id": issue, "outside_writes": state.get("outside_writes"), "transcript": state.get("transcript")}
                 if status in self.DONE:
@@ -383,7 +387,8 @@ RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime
 
 
 def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,
-            on_start: Callable[[Any], None], on_log: Callable[[str], None], session: str = "") -> Outcome:
+            on_start: Callable[[Any], None], on_log: Callable[[str], None], session: str = "",
+            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None) -> Outcome:
     """Run one agent turn to completion, streaming log lines; never raises for agent failures."""
     workspace = workspace.resolve()
     state: dict[str, Any] = {"workspace": workspace}
@@ -432,9 +437,12 @@ def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,
                 if size < STDOUT_LIMIT:
                     lines.append(line)
                     size += len(line)
+                count = len(state.get("transcript") or [])
                 text = runtime.progress(line, state)
                 if text:
                     on_log(text)
+                if len(state.get("transcript") or []) != count:
+                    on_transcript(list(state["transcript"]))
             process.wait()
         finally:
             timer.cancel()

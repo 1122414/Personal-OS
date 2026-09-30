@@ -4,6 +4,12 @@ export async function loadState() {
   return response.json()
 }
 
+export async function loadRunningRuns() {
+  const response = await fetch('/api/agent_runs/running')
+  if (!response.ok) throw new Error('无法读取运行中的 Agent')
+  return (await response.json()).agent_runs
+}
+
 export async function action(name, payload = {}) {
   const response = await fetch(`/api/action/${name}`, {
     method: 'POST',

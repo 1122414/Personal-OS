@@ -202,6 +202,31 @@ class RuntimeTests(unittest.TestCase):
                 self.assertIn(message, run["error"])
                 self.assertEqual(self.store.get("task", self.task["id"])["status"], "Blocked")
 
+    def test_the_transcript_is_saved_while_the_agent_is_still_running(self):
+        release = threading.Event()
+
+        class Process(FakeAgentProcess):
+            def _stdout(self):
+                yield from lines({"session": "s-1", "say": "先看看结构"}, {"tool": "Bash ls"}).splitlines(True)
+                release.wait(5)
+                self.returncode = 0
+                self._done.set()
+                yield from lines({"say": "好了"}).splitlines(True)
+
+        run = self.start(Process)
+        self.addCleanup(release.set)
+        deadline = time.monotonic() + 3
+        while len(self.store.get("agent_run", run["id"]).get("transcript") or []) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(self.store.get("agent_run", run["id"])["transcript"], [{"type": "text", "text": "先看看结构"}, {"type": "tool", "text": "Bash ls"}])
+        running = self.store.running_agent_runs()
+        self.assertEqual([item["id"] for item in running], [run["id"]])
+        self.assertNotIn("before_snapshot", running[0])
+        release.set()
+        run = self.wait_run(run["id"])
+        self.assertEqual(run["transcript"][-1], {"type": "text", "text": "好了"})
+        self.assertEqual(self.store.running_agent_runs(), [])
+
     def test_cancel_stops_the_process_and_keeps_log(self):
         started = threading.Event()
 

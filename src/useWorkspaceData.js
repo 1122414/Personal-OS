@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
-import { action, loadState } from './api.js'
+import { useEffect, useRef, useState } from 'react'
+import { action, loadRunningRuns, loadState } from './api.js'
+import { mergeRunningRuns } from './liveRuns.js'
 import { createWorkspaceRequests } from './workspaceRequests.js'
 
 export default function useWorkspaceData(onError) {
@@ -8,11 +9,14 @@ export default function useWorkspaceData(onError) {
   const [loading, setLoading] = useState(true)
   const [requests] = useState(() => createWorkspaceRequests({
     load: loadState,
+    loadRunning: loadRunningRuns,
     action,
     onData: setData,
     onPending: setPending,
   }))
   const hasRunningAgent = !!data?.agent_runs?.some(item => item.status === 'Running')
+  const latest = useRef(data)
+  latest.current = data
 
   useEffect(() => {
     let mounted = true
@@ -27,7 +31,19 @@ export default function useWorkspaceData(onError) {
   }, [requests, onError])
 
   useEffect(() => {
-    const timer = setInterval(() => requests.refresh().catch(() => {}), hasRunningAgent ? 8000 : 30000)
+    const timer = setInterval(() => requests.refresh().catch(() => {}), 30000)
+    return () => clearInterval(timer)
+  }, [requests])
+
+  useEffect(() => {
+    if (!hasRunningAgent) return
+    const timer = setInterval(async () => {
+      const runs = await requests.live().catch(() => null)
+      if (!runs) return
+      const merged = mergeRunningRuns(latest.current, runs)
+      if (merged.stale) requests.refresh().catch(() => {})
+      else setData(merged.data)
+    }, 1500)
     return () => clearInterval(timer)
   }, [requests, hasRunningAgent])
 

@@ -226,3 +226,4 @@
 .agent-composer textarea{width:100%;resize:vertical;min-height:44px;max-height:200px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--ink);font-size:13px;line-height:1.6;outline:0}.agent-composer textarea:focus{border-color:var(--accent)}
 .chat-actions{display:flex;justify-content:flex-end;gap:8px}
 .status-Reply{color:#b0304a;background:rgba(214,84,110,.16)}.theme-night .status-Reply,.theme-afternoon .status-Reply{color:#ff9aac}.chat-tag.ask{color:#b0304a;border-color:rgba(214,84,110,.45)}.theme-night .chat-tag.ask,.theme-afternoon .chat-tag.ask{color:#ff9aac}
+.chat-live{display:flex;align-items:center;gap:8px;margin:6px 0 0;font-size:12px;color:var(--muted)}.chat-live::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);animation:chat-live 1.2s ease-in-out infinite}@keyframes chat-live{50%{opacity:.25}}.chat-end{scroll-margin-bottom:150px}

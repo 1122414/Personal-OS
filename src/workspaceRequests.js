@@ -1,6 +1,6 @@
 // Read responses are snapshots. Mutations invalidate older reads; overlapping
 // mutations need one fresh snapshot after all writes settle.
-export function createWorkspaceRequests({ load, action, onData, onPending }) {
+export function createWorkspaceRequests({ load, action, onData, onPending, loadRunning }) {
   let active = true
   let version = 0
   let overlapping = false
@@ -21,6 +21,15 @@ export function createWorkspaceRequests({ load, action, onData, onPending }) {
     } catch (error) {
       if (active && request === version) throw error
     }
+  }
+
+  // A live read never invalidates others; it is dropped once a write or newer snapshot starts.
+  async function live() {
+    if (!active || writes.size || !loadRunning) return
+    const request = version
+    const runs = await loadRunning()
+    if (!active || writes.size || request !== version) return
+    return runs
   }
 
   async function mutate(name, payload) {
@@ -59,6 +68,7 @@ export function createWorkspaceRequests({ load, action, onData, onPending }) {
 
   return {
     refresh,
+    live,
     mutate,
     start() { active = true },
     stop() {

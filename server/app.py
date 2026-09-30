@@ -93,6 +93,9 @@ def make_handler(store: Store, static_root: Path):
                 except ValueError as exc:
                     self._json(404, {"error": str(exc)})
                 return
+            if route == "/api/agent_runs/running":
+                self._json(200, {"agent_runs": store.running_agent_runs()})
+                return
             if route == "/api/health":
                 self._json(200, {"status": "ok"})
                 return
