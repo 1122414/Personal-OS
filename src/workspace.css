@@ -284,3 +284,7 @@
 .reminder-list{display:flex;flex-direction:column;max-height:320px;overflow:auto}
 .reminder-row{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--border)}
 .reminder-title{flex:1;min-width:0;font-size:14px}
+.log-text{white-space:normal}
+.report-tools{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+.log-text h2{font-size:15px;margin:14px 0 6px}
+.log-text h2:first-child{margin-top:0}

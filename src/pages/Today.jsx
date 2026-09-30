@@ -15,7 +15,7 @@ export default function TodayPlan({ data, run, open, navigate }) {
   const review = hour >= 20 || hour < 6
   const canSuggest = data.runtime?.codex_available && !suggestions.length && (pool.length + todos.length - done) > 1
 
-  return <Panel className="work-panel today-plan" title={review ? '今天 · 回顾' : '今天'} action={<span className="panel-tools"><span className="overline">{done} / {todos.length} 已完成</span><button className="text-link" onClick={() => navigate('todos')}>全部待办 →</button><Button variant="primary" className="compact" onClick={() => log ? navigate('history') : run('draft_log', {})}>{log ? (log.confirmed_at ? '查看今日日报' : '核对并结束今天') : '生成今日日报'}</Button></span>}>
+  return <Panel className="work-panel today-plan" title={review ? '今天 · 回顾' : '今天'} action={<span className="panel-tools"><span className="overline">{done} / {todos.length} 已完成</span><button className="text-link" onClick={() => navigate('todos')}>全部待办 →</button><Button variant="primary" className="compact" onClick={() => navigate('history')}>{log ? (log.confirmed_at ? '查看今日日报' : '核对并结束今天') : '生成今日日报'}</Button></span>}>
     <div className="todo-toolbar">
       <AddTodo run={run} today placeholder="加一件今天要做的事，回车保存" />
       {pool.length > 0 && <select aria-label="从待办池里挑" value="" onChange={event => event.target.value && run('plan_todo', { id: event.target.value, today: true }, { quiet: true })}><option value="">从待办池里挑…</option>{pool.map(todo => <option key={todo.id} value={todo.id}>{todo.title}</option>)}</select>}

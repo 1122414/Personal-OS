@@ -33,7 +33,7 @@ function Board({ tasks, projects, allRuns, latestRun, selectedId, select }) {
   })}</div>
 }
 
-export default function Tasks({ data, run, open, focus }) {
+export default function Tasks({ data, run, open, focus, navigate }) {
   const [tab, setTab] = useState('all')
   const [view, setView] = useState('list')
   const [selectedId, select] = useState(focus || null)
@@ -46,9 +46,11 @@ export default function Tasks({ data, run, open, focus }) {
   const artifacts = data.artifacts.filter(item => item.task_id === selected?.id)
   const events = data.events.filter(event => event.subject_kind === 'task' && event.subject_id === selected?.id).slice(0, 6)
   const latestRun = taskId => data.agent_runs.find(item => item.task_id === taskId)
+  const pendingKnowledge = data.knowledge_proposals.filter(item => item.status === 'Review').length
 
   return <div className="page tasks-page">
     <div className="page-toolbar">{view === 'list' ? <div className="tabs">{tabs.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</div> : <span className="muted">按状态分列，已归档的不显示。</span>}<div className="inline-actions"><div className="tabs view-toggle" role="group" aria-label="Agent 任务视图">{[['list', '列表'], ['board', '看板']].map(([key, label]) => <button key={key} className={view === key ? 'active' : ''} aria-pressed={view === key} onClick={() => setView(key)}>{label}</button>)}</div><Button variant="primary" onClick={() => open('task')}>＋ 新建 Agent 任务</Button></div></div>
+    {pendingKnowledge > 0 && <p className="notice">有 {pendingKnowledge} 条知识写入等你确认。<button className="text-link" onClick={() => navigate('review')}>去确认 →</button></p>}
     <div className={`split-layout task-split ${view === 'board' ? 'board-split' : ''}`}>
       {view === 'board' ? <Panel className="list-panel board-panel"><Board tasks={filtered} projects={data.projects} allRuns={data.agent_runs} latestRun={latestRun} selectedId={selected?.id} select={select} /></Panel> : <Panel className="list-panel">
         {filtered.length ? <div className="task-table"><div className="table-head"><span>任务名称</span><span>所属项目</span><span>通道</span><span>对话</span><span>状态</span></div>{filtered.map(task => <button key={task.id} className={`task-row ${selected?.id === task.id ? 'selected' : ''}`} onClick={() => select(task.id)}>

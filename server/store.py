@@ -25,7 +25,8 @@ from .learning_summary import LearningSummaryMixin, SUMMARY_KINDS, SUMMARY_ACTIO
 from .recall import RecallMixin, RECALL_KINDS, RECALL_ACTIONS
 from .traces import TracesMixin, TRACE_KINDS, TRACE_ACTIONS
 from .obsidian_home import ObsidianHomeMixin, HOME_ACTIONS
-from .todos import TodoMixin, TODO_KINDS, TODO_ACTIONS
+from .todos import TodoMixin, TODO_KINDS, TODO_ACTIONS, todo_order
+from .daily_report import clean_report, draft_text, report_prompt
 from .cards import CardsMixin, CARD_KINDS, CARD_ACTIONS
 from .feeds import fetch_feed, published_time
 from .workbuddy import read_updates, source_root
@@ -545,6 +546,16 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         if day == local_day():
             self.scan_obsidian({"date": day})
         events = self.log_events(day)
+        summary = draft_text(self._report_facts(day))
+        revisions = list(log.get("revisions", [])) if log else []
+        if log:
+            revisions.append({"summary": log["summary"], "saved_at": stamp()})
+        item = self.put("daily_log", {"id": log["id"] if log else identifier(), "date": day, "summary": summary, "source_event_ids": [e["id"] for e in events], "confirmed_at": None, "revisions": revisions})
+        self.event("DailyLogDrafted", "daily_log", item["id"], details={"date": day})
+        return item
+
+    def _report_facts(self, day: str) -> dict[str, Any]:
+        events = self.log_events(day)
         reopened = {e["subject_id"] for e in events if e["type"] == "TodoReopened"}
         done = []
         for e in reversed(events):
@@ -554,40 +565,33 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
                 todo = self.get("todo", e["subject_id"] or "")
                 if e["subject_id"] not in reopened or (todo and (todo.get("done_at") or "")[:10] == day):
                     done.append(e["details"].get("title", "待办"))
-        done = list(dict.fromkeys(done))
-        decisions = [e["details"].get("title", "决策") for e in reversed(events) if e["type"] == "DecisionCreated"]
-        artifact_names = [e["details"].get("name", "产物") for e in reversed(events) if e["type"] == "ArtifactCreated"]
-        changed_notes = [e["details"].get("path", "笔记") for e in reversed(events) if e["type"] == "ObsidianFileChanged"]
-        unfinished = [t["title"] for t in self.todos_for_day(day) if not t.get("done_at") or t["done_at"][:10] > day]
-        blocked = [e["details"].get("title", "执行异常，请核对任务") for e in events if e["type"] in ("AgentRunFailed", "AgentRunCanceled", "AgentRunInterrupted")]
-        summary = "今天完成：\n" + ("\n".join(f"- {x}" for x in done) or "- 暂无")
-        if decisions:
-            summary += "\n\n今日决策：\n" + "\n".join(f"- {x}" for x in decisions)
-        if artifact_names:
-            summary += "\n\n产物：\n" + "\n".join(f"- {x}" for x in artifact_names)
-        if changed_notes:
-            summary += "\n\n知识库变更（仅供核对，不自动计为完成）：\n" + "\n".join(f"- {x}" for x in changed_notes[:20])
-        if unfinished:
-            summary += "\n\n未完成：\n" + "\n".join(f"- {x}" for x in unfinished)
-        if blocked:
-            summary += "\n\n阻塞与执行异常（需要处理）：\n" + "\n".join(f"- {x}" for x in dict.fromkeys(blocked))
-        traces: dict[str, list[str]] = {}
+        traces: dict[str, dict[str, list[str]]] = {}
         for e in reversed(events):
             if e["type"] in ("TraceCommit", "TraceSession"):
-                label = "提交" if e["type"] == "TraceCommit" else e["details"].get("label", "会话")
-                traces.setdefault(e["details"].get("project") or "未关联项目", []).append(f"{label}：{e['details'].get('title', '')}")
-        if traces:
-            summary += "\n\n代码与会话痕迹（仅供核对，不自动计为完成）：\n" + "\n".join(
-                f"- {project}\n" + "\n".join(f"  - {x}" for x in list(dict.fromkeys(items))[:20]) for project, items in traces.items())
-        external = [e["details"].get("title", "外部资料") for e in reversed(events) if e["type"] in ("ExternalRecordImported", "ExternalRecordUpdated")]
-        if external:
-            summary += "\n\n外部资料收录/更新（不计为任务完成）：\n" + "\n".join(f"- {x}" for x in dict.fromkeys(external))
-        revisions = list(log.get("revisions", [])) if log else []
-        if log:
-            revisions.append({"summary": log["summary"], "saved_at": stamp()})
-        item = self.put("daily_log", {"id": log["id"] if log else identifier(), "date": day, "summary": summary, "source_event_ids": [e["id"] for e in events], "confirmed_at": None, "revisions": revisions})
-        self.event("DailyLogDrafted", "daily_log", item["id"], details={"date": day})
-        return item
+                trace = traces.setdefault(e["details"].get("project") or "未关联项目", {"commits": [], "sessions": []})
+                if e["type"] == "TraceCommit":
+                    trace["commits"].append(e["details"].get("title", ""))
+                else:
+                    trace["sessions"].append(f"{e['details'].get('label', '会话')}：{e['details'].get('title', '')}")
+        for trace in traces.values():
+            trace["commits"] = list(dict.fromkeys(trace["commits"]))[:20]
+            trace["sessions"] = list(dict.fromkeys(trace["sessions"]))[:20]
+        planned = self.todos_for_day(day)
+        brief = lambda t: {"title": t["title"], "priority": t.get("priority", "medium"), "carried_days": t.get("carried_days", 0)}
+        current = day == local_day()
+        return {
+            "done": list(dict.fromkeys(done)),
+            "decisions": [e["details"].get("title", "决策") for e in reversed(events) if e["type"] == "DecisionCreated"],
+            "artifacts": [e["details"].get("name", "产物") for e in reversed(events) if e["type"] == "ArtifactCreated"],
+            "notes": [e["details"].get("path", "笔记") for e in reversed(events) if e["type"] == "ObsidianFileChanged"][:20],
+            "unfinished": [brief(t) for t in planned if not t.get("done_at") or t["done_at"][:10] > day],
+            "blocked": list(dict.fromkeys(e["details"].get("title", "执行异常，请核对任务") for e in events if e["type"] in ("AgentRunFailed", "AgentRunCanceled", "AgentRunInterrupted"))),
+            "traces": traces,
+            "external": list(dict.fromkeys(e["details"].get("title", "外部资料") for e in reversed(events) if e["type"] in ("ExternalRecordImported", "ExternalRecordUpdated"))),
+            "pool_high": [brief(t) for t in sorted(self._open_todos(), key=todo_order) if current and t.get("priority") == "high" and not t.get("planned_date")],
+            "agent_tasks": [{"title": t["title"], "status": t["status"]} for t in self.all("task") if current and t["status"] in ("Review", "Blocked") and not t.get("archived_at")],
+            "cards_reviewed": sum(1 for e in self.events(day) if e["type"] == "LearningCardReviewed"),
+        }
 
     def update_log(self, p: dict[str, Any]) -> dict[str, Any]:
         item = self._existing("daily_log", p)
@@ -1316,23 +1320,39 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         return project
 
     def summarize_log(self, p: dict[str, Any]) -> dict[str, Any]:
-        log = self._existing("daily_log", p)
-        if log.get("confirmed_at"):
-            raise ValueError("日报已封存")
-        events = self.log_events(log["date"])
-        rules = [rule["text"] for rule in self.all("personal_rule") if rule["enabled"] and rule["category"] in ("Daily Log", "General")]
-        context = {"date": log["date"], "events": [{"type": e["type"], "details": e["details"]} for e in events], "rules": rules, "existing_draft": log["summary"]}
-        prompt = "根据真实事件写一份简洁中文日报：已完成、产物、重要决策、未完成。规则必须遵守。Obsidian 文件变化是线索，不自动算完成。不得虚构。只输出日报正文。\n" + json.dumps(context, ensure_ascii=False)
-        summary = required_text(self._codex_readonly(prompt), "日报内容", 20000)
-        current = self.get("daily_log", log["id"])
-        if not current or current["updated_at"] != log["updated_at"] or current.get("confirmed_at"):
-            raise ValueError("日报在生成期间已修改或确认，请重新生成")
-        log["summary"] = summary
-        log.setdefault("revisions", []).append({"summary": current["summary"], "saved_at": stamp()})
-        log["source_event_ids"] = [e["id"] for e in events]
-        log = self.put("daily_log", log)
-        self.event("DailyLogSummarized", "daily_log", log["id"], details={"date": log["date"]})
-        return log
+        engine = p.get("engine") or "codex"
+        runtime = RUNTIMES.get(engine)
+        if not runtime or runtime.remote:
+            raise ValueError("该通道不能生成日报")
+        with self.lock:
+            if p.get("id"):
+                day = self._existing("daily_log", p)["date"]
+            else:
+                day = past_or_today(p.get("date") or local_day())
+            log = next((x for x in self.all("daily_log") if x["date"] == day), None)
+            if log and log.get("confirmed_at"):
+                raise ValueError("日报已封存")
+            if day == local_day():
+                self.scan_obsidian({"date": day})
+            facts = self._report_facts(day)
+            event_ids = [e["id"] for e in self.log_events(day)]
+            rules = [rule["text"] for rule in self.all("personal_rule") if rule["enabled"] and rule["category"] in ("Daily Log", "General")]
+            base = log["updated_at"] if log else None
+        summary = required_text(clean_report(self._generate_text(engine, report_prompt(day, facts, rules, log["summary"] if log else ""))), "日报内容", 20000)
+        with self.lock:
+            if self._stopping:
+                raise ValueError("服务正在关闭，生成结果未写入")
+            current = next((x for x in self.all("daily_log") if x["date"] == day), None)
+            if (current["updated_at"] if current else None) != base or (current and current.get("confirmed_at")):
+                raise ValueError("日报在生成期间已修改或确认，请重新生成")
+            revisions = [*current.get("revisions", []), {"summary": current["summary"], "saved_at": stamp()}] if current else []
+            item = self.put("daily_log", {**(current or {"id": identifier(), "date": day}), "summary": summary, "source_event_ids": event_ids,
+                                          "confirmed_at": None, "revisions": revisions, "engine": runtime.label})
+            settings = self.get("settings", "settings") or {"id": "settings"}
+            if settings.get("report_engine") != engine:
+                self.put("settings", {**settings, "report_engine": engine})
+            self.event("DailyLogSummarized", "daily_log", item["id"], details={"date": day, "engine": runtime.label})
+            return {**self.log_view(item), "message": f"{runtime.label} 已生成工作日报"}
 
     def _codex_readonly(self, prompt: str) -> str:
         executable = self.codex_command()

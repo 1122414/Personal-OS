@@ -117,7 +117,7 @@ class TodoTests(unittest.TestCase):
         self.store.action("toggle_todo", {"id": flip["id"]})
         self.store.action("toggle_todo", {"id": flip["id"]})
         summary = self.store.action("draft_log", {})["summary"]
-        completed, _, rest = summary.partition("未完成：")
+        completed, _, rest = summary.partition("## 明日工作计划")
         self.assertIn("写完简历", completed)
         self.assertNotIn("点错了", completed)
         self.assertIn("复习数仓", rest)

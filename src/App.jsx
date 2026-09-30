@@ -26,7 +26,7 @@ function initialPage() {
 
 const pageTitles = {
   today: '早上好', records: '记录', todos: '待办', learning: '学习', tasks: 'Agent 任务', projects: '项目', intelligence: 'AI 日报',
-  review: '审核', history: '历史', settings: '设置',
+  review: '审核', history: '工作日报', settings: '设置',
 }
 
 function greeting() {
@@ -188,7 +188,7 @@ export default function App() {
         {page === 'records' && <Records data={data} run={run} focus={focus} navigate={navigate} open={open} />}
         {page === 'learning' && <Learning data={data} run={run} focus={focus} navigate={navigate} />}
         {page === 'todos' && <Todos data={data} run={run} open={open} />}
-        {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} />}
+        {page === 'tasks' && <Tasks data={data} run={run} open={open} focus={focus} navigate={navigate} />}
         {page === 'projects' && <Projects data={data} run={run} open={open} focus={focus} navigate={navigate} />}
         {page === 'intelligence' && <Intelligence data={data} run={run} open={open} focus={focus} refresh={refresh} navigate={navigate} />}
         {page === 'review' && <Review data={data} run={run} open={open} focus={focus} navigate={navigate} />}
