@@ -98,6 +98,15 @@ class RepairTests(unittest.TestCase):
         self.store.action("create_todo", {"title": "推进", "project_id": project["id"]})
         self.assertTrue(self.store.pulse_stale(pulse))
 
+    def test_pulse_stale_waits_for_store_lock(self):
+        # The daily automation thread calls pulse_stale outside action(); the shared connection must stay serialized.
+        project = self.store.action("create_project", {"name": "project"})
+        done = threading.Event()
+        with self.store.lock:
+            threading.Thread(target=lambda: (self.store.pulse_stale(project), done.set()), daemon=True).start()
+            self.assertFalse(done.wait(0.2))
+        self.assertTrue(done.wait(2))
+
     def test_failed_and_canceled_runs_keep_evidence_and_agent_constraints(self):
         for canceled in (False, True):
             with self.subTest(canceled=canceled):

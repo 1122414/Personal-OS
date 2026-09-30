@@ -265,6 +265,7 @@ class Store(TodoMixin, WorkspaceMixin, LearningMixin, LearningSummaryMixin, Reca
         stale = any(event["id"] not in known for event in self.log_events(log["date"]))
         return {**log, "stale": stale, "latest_source_event_ids": [e["id"] for e in self.log_events(log["date"])]}
 
+    @synchronized
     def pulse_stale(self, project: dict[str, Any]) -> bool:
         generated = project.get("pulse_generated_at")
         if not generated:
