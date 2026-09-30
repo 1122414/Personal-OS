@@ -1135,7 +1135,7 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         log = lambda text: self._agent_log(run_id, text)
         live = lambda entries: self._agent_transcript(run_id, entries)
         model = run.get("model") or ""
-        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, log, self._settings(), external_id, rerun, remember, session=session, on_transcript=live, model=model)
+        outcome = runtime.run(executable, prompt, Path(run["workspace_path"]), started, log, self._settings(), external_id, rerun, remember, session=session, on_transcript=live, model=model, keep_session=True)
         if session and not outcome.succeeded and not outcome.transcript and not outcome.detached:
             with self.lock:
                 current = self.get("agent_run", run_id)
@@ -1145,7 +1145,7 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
                     self.put("agent_run", current)
             if retry:
                 log("原会话无法续接，已开新会话并附上之前的对话")
-                outcome = runtime.run(executable, fallback_prompt, Path(run["workspace_path"]), started, log, self._settings(), "", False, remember, on_transcript=live, model=model)
+                outcome = runtime.run(executable, fallback_prompt, Path(run["workspace_path"]), started, log, self._settings(), "", False, remember, on_transcript=live, model=model, keep_session=True)
         with self.lock:
             self._processes.pop(run_id, None)
             self._log_flushed.pop(run_id, None)

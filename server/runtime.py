@@ -180,6 +180,14 @@ class Runtime:
         """Extra arguments that continue an earlier session of this agent."""
         return []
 
+    def turn_command(self, executable: str, workspace: Path, output: Path, prompt: str,
+                     session: str = "", model: str = "", keep_session: bool = False) -> list[str]:
+        """The whole command line for one turn; ``keep_session`` asks agents that can to save it for a later resume."""
+        command = self.command(executable, workspace, output, prompt) + (self.resume_args(session) if session else [])
+        if model and self.model_flag:
+            command[self.model_position:self.model_position] = [self.model_flag, model]
+        return command
+
     def models(self, executable: str) -> dict[str, Any]:
         """{"models": [{"id", "label"}], "default": id or ""} as far as this machine can tell."""
         return {"models": [], "default": ""}
@@ -191,8 +199,9 @@ class Runtime:
     def run(self, executable: str, prompt: str, workspace: Path, on_start: Callable[[Any], None],
             on_log: Callable[[str], None], settings: dict[str, Any], external_id: str = "", rerun: bool = False,
             on_external_id: Callable[[str], None] = lambda _: None, session: str = "",
-            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None, model: str = "") -> Outcome:
-        return execute(self, executable, prompt, workspace, on_start, on_log, session, on_transcript, model)
+            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None, model: str = "",
+            keep_session: bool = False) -> Outcome:
+        return execute(self, executable, prompt, workspace, on_start, on_log, session, on_transcript, model, keep_session)
 
     def progress(self, line: str, state: dict[str, Any]) -> str | None:
         """Turn one stdout line into a log line; may record result/error/external_id in state."""
@@ -203,15 +212,56 @@ class Runtime:
 
 
 class CodexRuntime(Runtime):
+    """codex exec --json: one event per line. Agent tasks keep the session so the next turn can ``exec resume`` it;
+    resume has no -s/-C, so the sandbox goes in as config and the working directory is the process cwd."""
     id, label, binary = "codex", "Codex", "codex"
     model_flag, model_position = "-m", 2
+    resumable = True
 
     def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
         return [executable, "exec", "--ephemeral", "--skip-git-repo-check", "-s", "workspace-write",
-                "-C", str(workspace), "-o", str(output), "-"]
+                "-C", str(workspace), "--json", "-o", str(output), "-"]
+
+    def turn_command(self, executable: str, workspace: Path, output: Path, prompt: str,
+                     session: str = "", model: str = "", keep_session: bool = False) -> list[str]:
+        models = ["-m", model] if model else []
+        if session:
+            return [executable, "exec", "resume", *models, "--skip-git-repo-check", "-c", 'sandbox_mode="workspace-write"',
+                    "--json", "-o", str(output), session, "-"]
+        command = self.command(executable, workspace, output, prompt)
+        if keep_session:
+            command.remove("--ephemeral")
+        return [*command[:2], *models, *command[2:]]
+
+    def progress(self, line: str, state: dict[str, Any]) -> str | None:
+        event = _json(line)
+        if event is None:
+            return _brief(line) or None
+        kind, item = event.get("type"), event.get("item") or {}
+        if kind == "thread.started":
+            state["external_id"] = event.get("thread_id") or state.get("external_id")
+            return None
+        if kind == "turn.failed":
+            state["error"] = (event.get("error") or {}).get("message") or "Codex 执行失败"
+            return _brief(state["error"])
+        if kind == "error":
+            return _brief(event.get("message"))
+        if kind != "item.completed":
+            return None
+        if item.get("type") == "agent_message" and item.get("text"):
+            state["result"] = item["text"]
+            say(state, item["text"])
+            return _brief(item["text"])
+        if item.get("type") == "command_execution":
+            return tool(state, _tool_line("Bash", {"command": item.get("command") or ""}, state))
+        if item.get("type") == "file_change":
+            return " · ".join(tool(state, _tool_line("Edit", {"path": change.get("path") or ""}, state)) for change in item.get("changes") or []) or None
+        if item.get("type") in ("mcp_tool_call", "web_search"):
+            return tool(state, _brief(f"{item['type']} {item.get('tool') or item.get('query') or ''}"))
+        return None
 
     def result(self, state: dict[str, Any], stdout: str, output: Path) -> str:
-        return output.read_text(encoding="utf-8") if output.exists() else stdout
+        return (output.read_text(encoding="utf-8") if output.exists() else "") or state.get("result") or ""
 
     def models(self, executable: str) -> dict[str, Any]:
         home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
@@ -452,7 +502,7 @@ class MulticaRuntime(Runtime):
             return None
         return resolve_command(settings.get(self.setting) or "")
 
-    def run(self, executable, prompt, workspace, on_start, on_log, settings, external_id="", rerun=False, on_external_id=lambda _: None, session="", on_transcript=lambda _: None, model=""):
+    def run(self, executable, prompt, workspace, on_start, on_log, settings, external_id="", rerun=False, on_external_id=lambda _: None, session="", on_transcript=lambda _: None, model="", keep_session=False):
         base = [executable, *(["--profile", settings["multica_profile"]] if settings.get("multica_profile") else [])]
         handle = MulticaHandle(base)
         handle.issue = external_id
@@ -535,16 +585,14 @@ RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime
 
 def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,
             on_start: Callable[[Any], None], on_log: Callable[[str], None], session: str = "",
-            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None, model: str = "") -> Outcome:
+            on_transcript: Callable[[list[dict[str, str]]], None] = lambda _: None, model: str = "",
+            keep_session: bool = False) -> Outcome:
     """Run one agent turn to completion, streaming log lines; never raises for agent failures."""
     workspace = workspace.resolve()
     state: dict[str, Any] = {"workspace": workspace}
     with tempfile.TemporaryDirectory(prefix="personal-os-run-") as temp:
         output = Path(temp) / "result.txt"
-        command = runtime.command(executable, workspace, output, prompt) + (runtime.resume_args(session) if session else [])
-        if model and runtime.model_flag:
-            command[runtime.model_position:runtime.model_position] = [runtime.model_flag, model]
-        command = runtime.launcher(executable) + command
+        command = runtime.launcher(executable) + runtime.turn_command(executable, workspace, output, prompt, session, model, keep_session)
         if runtime.sandboxed:
             if not Path(SANDBOX_EXEC).is_file():
                 return Outcome(False, error=f"本机缺少 sandbox-exec，无法把 {runtime.label} 限制在工作目录内，已拒绝执行")

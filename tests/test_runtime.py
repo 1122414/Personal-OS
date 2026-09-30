@@ -169,6 +169,37 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("任务：派出去\n\n只改 README\n", prompts[1])
         self.assertIn("请遵守以下约束，与任务冲突时先提问：\n- 不要动 lockfile", prompts[1])
 
+    def test_codex_json_events_give_session_steps_and_reply(self):
+        codex, state = RUNTIMES["codex"], {"workspace": self.workspace.resolve()}
+        events = [
+            {"type": "thread.started", "thread_id": "t-1"}, {"type": "turn.started"},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "我先看看"}},
+            {"type": "item.started", "item": {"type": "command_execution", "command": "ls"}},
+            {"type": "item.completed", "item": {"type": "command_execution", "command": "ls", "exit_code": 0}},
+            {"type": "item.completed", "item": {"type": "file_change", "changes": [{"path": "/etc/hosts", "kind": "update"}]}},
+            {"type": "item.completed", "item": {"type": "agent_message", "text": "好了"}},
+            {"type": "turn.completed", "usage": {}},
+        ]
+        logs = [codex.progress(json.dumps(event), state) for event in events]
+        self.assertEqual(state["external_id"], "t-1")
+        self.assertEqual([log for log in logs if log], ["我先看看", "Bash ls", "Edit /etc/hosts", "好了"])
+        self.assertEqual([e["type"] for e in state["transcript"]], ["text", "tool", "tool", "text"])
+        self.assertTrue(state["outside_writes"])
+        self.assertEqual(codex.result(state, "", self.root / "missing.txt"), "好了")
+        codex.progress(json.dumps({"type": "turn.failed", "error": {"message": "额度不足"}}), state)
+        self.assertEqual(state["error"], "额度不足")
+
+    def test_codex_keeps_agent_sessions_and_resumes_them(self):
+        codex, out = RUNTIMES["codex"], self.root / "out.txt"
+        self.assertIn("--ephemeral", codex.turn_command("/bin/codex", self.workspace, out, "p"))
+        first = codex.turn_command("/bin/codex", self.workspace, out, "p", model="gpt-x", keep_session=True)
+        self.assertNotIn("--ephemeral", first)
+        self.assertEqual(first[:4], ["/bin/codex", "exec", "-m", "gpt-x"])
+        resume = codex.turn_command("/bin/codex", self.workspace, out, "p", session="t-1", model="gpt-x", keep_session=True)
+        self.assertEqual(resume[:5], ["/bin/codex", "exec", "resume", "-m", "gpt-x"])
+        self.assertEqual(resume[-2:], ["t-1", "-"])
+        self.assertIn('sandbox_mode="workspace-write"', resume)
+
     def test_codex_model_flag_follows_the_exec_subcommand(self):
         seen = {}
 
