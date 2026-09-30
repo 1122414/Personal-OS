@@ -5,12 +5,14 @@ import { Button, Empty, Panel } from '../ui.jsx'
 import { TopicForm, recordDate } from '../workspace.jsx'
 import Conversation from '../learning/Conversation.jsx'
 import TopicMaterials from '../learning/TopicMaterials.jsx'
+import { CardsTab } from '../learning/Cards.jsx'
+import { todayCards } from '../learning/cards.js'
 import { useLearningDetail, useLearningDraft } from '../learning/useLearningWorkspace.js'
 
 function TopicWorkspace({ topic, data, run, navigate }) {
   const { detail, error, reload } = useLearningDetail(topic.id)
   const draft = useLearningDraft(topic.id, run, reload, detail?.materials)
-  const [tab, setTab] = useState(() => window.location.hash.split('/')[2] ? 'chat' : 'summary')
+  const [tab, setTab] = useState(() => window.location.hash.split('/')[2] ? 'chat' : 'cards')
   const [editing, setEditing] = useState(false)
   const current = detail?.topic?.updated_at > topic.updated_at ? detail.topic : topic
   const hasRelated = !!detail?.related_records?.length
@@ -28,7 +30,9 @@ function TopicWorkspace({ topic, data, run, navigate }) {
   }
 
   let content = <Empty title="正在读取对话…" />
-  if (detail && tab === 'summary') {
+  if (tab === 'cards') {
+    content = <CardsTab topic={topic} data={data} run={run} />
+  } else if (detail && tab === 'summary') {
     content = <LearningSummary topic={current} detail={detail} data={data} run={run} reload={reload} setTab={setTab} />
   } else if (detail && tab === 'chat') {
     content = (
@@ -63,6 +67,7 @@ function TopicWorkspace({ topic, data, run, navigate }) {
         </div>
       </div>
       <div className="tabs topic-tabs">
+        <button className={tab === 'cards' ? 'active' : ''} onClick={() => setTab('cards')}>卡片</button>
         <button className={tab === 'summary' ? 'active' : ''} onClick={() => setTab('summary')}>总结</button>
         <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>对话</button>
         <button className={tab === 'materials' ? 'active' : ''} onClick={() => setTab('materials')}>资料</button>
@@ -72,6 +77,13 @@ function TopicWorkspace({ topic, data, run, navigate }) {
       {editing && <TopicForm topic={current} run={run} close={() => setEditing(false)} onSaved={reload} />}
     </div>
   )
+}
+
+function cardSummary(topic, data) {
+  const cards = (data.learning_cards || []).filter(card => card.topic_id === topic.id && !card.mastered_at)
+  const due = todayCards(cards, data.today).length
+  const push = topic.push_enabled ? ` · 每天推送 ${topic.daily_count || 3} 张` : ''
+  return `${cards.length} 张卡片${due ? `，今天 ${due} 张` : ''}${push}`
 }
 
 export default function Learning({ data, run, focus, navigate }) {
@@ -92,7 +104,7 @@ export default function Learning({ data, run, focus, navigate }) {
                 <div>
                   <h2>{item.title}</h2>
                   <p>{item.goal || '从上次的想法继续探索。'}</p>
-                  <small>Codex · {item.mode === 'guided' ? '带着学' : '随问随答'} · {recordDate(item)}</small>
+                  <small>{cardSummary(item, data)} · Codex · {item.mode === 'guided' ? '带着学' : '随问随答'} · {recordDate(item)}</small>
                 </div>
                 <span>继续学习 →</span>
               </button>

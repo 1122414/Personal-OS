@@ -80,7 +80,7 @@ class CardsMixin:
         self.delete("learning_card", card["id"])
         self.event("LearningCardDeleted", "learning_card", card["id"], details={"topic_id": card["topic_id"], "front": card["front"][:80]})
         self._refresh_card_note(card["created_at"][:10])
-        return {"deleted": card["id"]}
+        return {"deleted": card["id"], "message": "卡片已删除"}
 
     def review_card(self, p: dict[str, Any]) -> dict[str, Any]:
         card = self._existing("learning_card", p)

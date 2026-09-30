@@ -161,7 +161,7 @@ class WorkspaceMixin:
                 self.put("idea_review", {**review, "items": items})
         self.delete("record", record["id"])
         self.event("RecordDeleted", "record", record["id"], details={"title": record["title"]})
-        return {"deleted": record["id"]}
+        return {"deleted": record["id"], "message": "记录已删除"}
 
     def add_material(self, p):
         record = self._existing("record", {"id": p.get("record_id")})

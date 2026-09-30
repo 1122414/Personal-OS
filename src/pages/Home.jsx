@@ -3,6 +3,7 @@ import { Modal, Panel, taskState } from '../ui.jsx'
 import { Capture } from '../workspace.jsx'
 import { RecallCard } from '../PersonalState.jsx'
 import { HomeItems, LastWork, RepoOnboarding } from '../HomePanels.jsx'
+import { TodayCards } from '../learning/Cards.jsx'
 import TodayPlan from './Today.jsx'
 
 function Attention({ data, navigate }) {
@@ -39,6 +40,7 @@ export default function Home({ data, run, open, navigate, refresh }) {
       <TodayPlan data={data} run={run} open={open} navigate={navigate} />
       {data.projects.length === 0 ? <RepoOnboarding run={run} /> : <LastWork data={data} run={run} />}
       <div className="home-side">
+        <TodayCards data={data} run={run} navigate={navigate} />
         <HomeItems data={data} run={run} refresh={refresh} navigate={navigate} />
         <HomeStrip data={data} run={run} navigate={navigate} />
       </div>

@@ -115,7 +115,7 @@ class TodoMixin:
         item = self._existing("todo", p)
         self.delete("todo", item["id"])
         self.event("TodoDeleted", "todo", item["id"], item.get("project_id"), {"title": item["title"]})
-        return {"deleted": item["id"]}
+        return {"deleted": item["id"], "message": "待办已删除"}
 
     def record_to_todo(self, p: dict[str, Any]) -> dict[str, Any]:
         record = self._existing("record", p)

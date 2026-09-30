@@ -21,6 +21,7 @@ export const NAV = [
   ['today', '首页', 'Today'],
   ['records', '记录', 'Records'],
   ['todos', '待办', 'To-dos'],
+  ['learning', '学习', 'Learning'],
   ['tasks', 'Agent 任务', 'Agents'],
   ['projects', '项目', 'Projects'],
   ['intelligence', 'AI 日报', 'Reports'],
