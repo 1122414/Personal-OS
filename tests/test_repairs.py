@@ -81,7 +81,8 @@ class RepairTests(unittest.TestCase):
         self.store.db.commit()
         for _ in range(1001):
             self.store.event("TaskUpdated")
-        self.assertEqual(len(self.store.state()["events"]), 1000)
+        self.assertEqual(len(self.store.state()["events"]), 200)
+        self.assertEqual(len(self.store.events()), 1000)
         self.assertEqual(len(self.store.history(yesterday)["events"]), 1)
         self.assertIn(yesterday, self.store.history_dates())
         log = self.store.action("draft_log", {"date": yesterday})

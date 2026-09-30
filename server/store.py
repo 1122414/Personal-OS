@@ -53,6 +53,7 @@ DEFAULT_SETTINGS = {
 RUN_LOG_LINES = 40
 RUN_LOG_LINE_LIMIT = 300
 ASK_MARKER = "【需要你回复】"
+STATE_EVENTS = 200
 AGENT_RULE = f"完成后简要说明改了什么、怎么验证的。需要用户决定才能继续时直接提问，不要猜，并在回复最后单独一行写{ASK_MARKER}。"
 FOLLOW_UP_TAIL = "继续在同一工作目录内完成。" + AGENT_RULE
 
@@ -201,21 +202,21 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         self.db.commit()
 
     @synchronized
-    def events(self, day: str | None = None) -> list[dict[str, Any]]:
+    def events(self, day: str | None = None, limit: int = 1000) -> list[dict[str, Any]]:
         if day:
             rows = self.db.execute(
                 "SELECT * FROM activity WHERE substr(created_at,1,10)=? ORDER BY created_at DESC", (day,)
             ).fetchall()
         else:
-            rows = self.db.execute("SELECT * FROM activity ORDER BY created_at DESC LIMIT 1000").fetchall()
+            rows = self.db.execute("SELECT * FROM activity ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [{**dict(row), "details": json.loads(row["details"])} for row in rows]
 
     def state(self) -> dict[str, Any]:
         with self.lock:
             result = {
-                **{kind + "s": self.all(kind) for kind in KINDS if kind not in {"settings", "idea_review", "trace_sync"} | PRIVATE_KINDS | SUMMARY_PRIVATE},
+                **{kind + "s": self.all(kind) for kind in KINDS if kind not in {"settings", "idea_review", "trace_sync", "intelligence_item"} | PRIVATE_KINDS | SUMMARY_PRIVATE},
                 "settings": {**DEFAULT_SETTINGS, **self.get("settings", "settings")},
-                "events": self.events(),
+                "events": self.events(limit=STATE_EVENTS),
                 "today": local_day(),
                 "brief": self.brief(),
                 "today_todos": self.today_todos(),
@@ -223,14 +224,12 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
             result["runtime"] = self.runtime_status(result["settings"])
             result["history_dates"] = self.history_dates()
             result["daily_reports"] = report_index(result["settings"])
-            result["intelligence_items"] = self.intelligence_items()
             result["daily_logs"] = [self.log_view(log) for log in result["daily_logs"]]
             result["projects"] = [{**project, "pulse_stale": self.pulse_stale(project)} for project in result["projects"]]
             result["agent_runs"] = [{k: v for k, v in run.items() if k != "before_snapshot"} for run in result["agent_runs"]]
             result["backups"] = self.backups()
             result["personal_states"] = [self.personal_state_view(item) for item in result["personal_states"]]
             result["weekly_review"] = self.weekly_review_view()
-            result["last_work"] = self.last_work()
             result["home_items"] = self.home_items()
             result["trace_sync"] = {k: v for k, v in self._trace_state().items() if k != "files"}
             summaries = {item["topic_id"]: item for item in self.all("learning_summary")}

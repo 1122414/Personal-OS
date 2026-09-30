@@ -95,7 +95,7 @@ class TraceTests(unittest.TestCase):
         self.cursor_transcript(alpha, at(3, 11), "帮我看登录页样式", "已调整按钮间距，下一步补表单校验")
         self.codex_session(beta, at(3, 16), "排查同步失败", "原因是时区换算")
         self.store.action("register_projects", {"paths": [str(alpha), str(beta)]})
-        work = self.store.state()["last_work"]
+        work = self.store.last_work()
         self.assertEqual(work["date"], at(3).date().isoformat())
         groups = {g["name"]: g for g in work["groups"]}
         self.assertEqual(set(groups), {"alpha", "beta"})
@@ -126,7 +126,7 @@ class TraceTests(unittest.TestCase):
         for name, lines in (("main.jsonl", main), ("review.jsonl", review)):
             (folder / name).write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines))
         self.store.action("register_projects", {"paths": [str(alpha)]})
-        sessions = self.store.state()["last_work"]["groups"][0]["sessions"]
+        sessions = self.store.last_work()["groups"][0]["sessions"]
         self.assertEqual([(x["title"], x["last_text"]) for x in sessions], [("修一下导航", "导航已修复")])
 
     def test_unmatched_sessions_are_listed_separately(self):
@@ -134,7 +134,7 @@ class TraceTests(unittest.TestCase):
         self.commit(alpha, "提交", at(2))
         self.codex_session(self.root / "elsewhere", at(2, 12), "别的目录里的问题", "回答")
         self.store.action("register_projects", {"paths": [str(alpha)]})
-        work = self.store.state()["last_work"]
+        work = self.store.last_work()
         self.assertEqual([x["title"] for x in work["unassigned_sessions"]], ["别的目录里的问题"])
 
     def test_workbuddy_sessions_are_kept_only_for_registered_projects(self):
@@ -148,7 +148,7 @@ class TraceTests(unittest.TestCase):
             db.executemany("INSERT INTO sessions VALUES (?,?,?,?,NULL)", [("w1", "项目里的会话", str(alpha / "src"), ms), ("w2", "定时日报", str(self.root / "notes"), ms)])
         self.store.action("save_settings", {"workbuddy_root": str(root)})
         self.store.action("register_projects", {"paths": [str(alpha)]})
-        work = self.store.state()["last_work"]
+        work = self.store.last_work()
         self.assertEqual([(x["label"], x["title"]) for x in work["groups"][0]["sessions"]], [("WorkBuddy", "项目里的会话")])
         self.assertEqual(work["unassigned_sessions"], [])
 
@@ -157,7 +157,7 @@ class TraceTests(unittest.TestCase):
         self.commit(alpha, "真正的工作", at(3))
         self.codex_session(self.root / "automation", at(1), "定时日报", "已生成")
         self.store.action("register_projects", {"paths": [str(alpha)]})
-        work = self.store.state()["last_work"]
+        work = self.store.last_work()
         self.assertEqual(work["date"], at(3).date().isoformat())
         self.assertEqual([g["name"] for g in work["groups"]], ["alpha"])
 
@@ -185,7 +185,7 @@ class TraceTests(unittest.TestCase):
         with patch("server.traces.read_appended", wraps=read_appended) as reader:
             self.store.action("sync_traces", {})
         self.assertEqual(reader.call_args.args[1], first_offset)
-        session = self.store.state()["last_work"]["groups"][0]["sessions"][0]
+        session = self.store.last_work()["groups"][0]["sessions"][0]
         self.assertEqual((session["title"], session["last_text"]), ("最早的问题", "追加的最新进展"))
         self.assertEqual(self.store._trace_state()["files"][str(path)]["offset"], len(path.read_bytes()))
 
@@ -217,7 +217,7 @@ class TraceTests(unittest.TestCase):
         self.commit(alpha, "可追溯的提交", at(1))
         self.codex_session(alpha, at(1, 11), "修一下首页", "已修好")
         self.store.action("register_projects", {"paths": [str(alpha)]})
-        group = self.store.state()["last_work"]["groups"][0]
+        group = self.store.last_work()["groups"][0]
         commit = self.store.action("show_commit", {"id": group["commits"][0]["id"]})
         self.assertEqual((commit["subject"], commit["project"]), ("可追溯的提交", "alpha"))
         self.assertIn("log.txt", commit["stat"])
@@ -239,7 +239,7 @@ class TraceTests(unittest.TestCase):
     def test_sync_without_projects_or_sources_is_empty_and_quiet(self):
         result = self.store.action("sync_traces", {})
         self.assertEqual((result["commits"], result["sessions"], result["errors"]), (0, 0, []))
-        self.assertIsNone(self.store.state()["last_work"])
+        self.assertIsNone(self.store.last_work())
 
 
 if __name__ == "__main__":

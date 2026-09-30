@@ -126,7 +126,7 @@ class WorkBuddyTests(unittest.TestCase):
     def test_newest_source_precedes_later_imported_older_records(self):
         newest = self.store.put("intelligence_item", {"title": "new", "source_updated_at": "2026-09-28T15:00:00+08:00"})
         oldest = self.store.put("intelligence_item", {"title": "old", "source_updated_at": "2026-09-22T15:00:00+08:00"})
-        self.assertEqual([item["id"] for item in self.store.state()["intelligence_items"]], [newest["id"], oldest["id"]])
+        self.assertEqual([item["id"] for item in self.store.intelligence_items()], [newest["id"], oldest["id"]])
 
     def test_research_task_carries_source_and_waits_for_user_to_start(self):
         self.store.action("sync_workbuddy", {})
