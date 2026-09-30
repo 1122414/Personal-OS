@@ -171,7 +171,7 @@ export default function App() {
   }
 
   const matches = useMemo(() => !search.trim() || !data ? [] : [
-    ...(data.records || []).filter(item => `${item.title} ${item.content}`.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'records', label: '记录' })),
+    ...(data.records || []).filter(item => item.origin !== 'topic' && `${item.title} ${item.content}`.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'records', label: '记录' })),
     ...(data.learning_topics || []).filter(item => `${item.title} ${item.goal}`.toLowerCase().includes(search.toLowerCase())).slice(0, 3).map(item => ({ ...item, page: 'learning', label: '学习' })),
     ...data.todos.filter(item => !item.archived_at && item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'todos', label: '待办' })),
     ...data.tasks.filter(item => item.title.toLowerCase().includes(search.toLowerCase())).slice(0, 4).map(item => ({ ...item, page: 'tasks', label: 'Agent 任务' })),

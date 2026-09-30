@@ -105,6 +105,7 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         self._trace_lock = threading.Lock()
         self._recover_interrupted_runs()
         self.split_todos()
+        self.mark_topic_uploads()
         self.init_learning()
         self.init_summaries()
 

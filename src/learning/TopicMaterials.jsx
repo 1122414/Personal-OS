@@ -34,7 +34,7 @@ export default function TopicMaterials({ topic, data, detail, run, reload }) {
   const [uploadError, setUploadError] = useState('')
   const fileInput = useRef(null)
   const records = data.records.filter(record => topic.record_ids.includes(record.id))
-  const availableRecords = data.records.filter(record => !topic.record_ids.includes(record.id))
+  const availableRecords = data.records.filter(record => !topic.record_ids.includes(record.id) && record.origin !== 'topic')
   const excluded = new Set(topic.card_excluded_record_ids || [])
 
   async function upload(event) {
@@ -46,13 +46,13 @@ export default function TopicMaterials({ topic, data, detail, run, reload }) {
         const name = file.name.toLowerCase()
         let record
         if (name.endsWith('.pdf')) {
-          record = await run('create_record', { title: file.name, content: '', record_type: 'resource' }, { quiet: true })
+          record = await run('create_record', { title: file.name, content: '', record_type: 'resource', origin: 'topic' }, { quiet: true })
           const material = await run('add_material', { record_id: record.id, ...await filePayload(file) }, { quiet: true })
           await run('parse_material', { id: material.id }, { quiet: true })
         } else if (/\.(md|markdown|txt)$/.test(name)) {
           const text = await file.text()
           if (text.length > 100000) throw new Error(`${file.name} 超过 10 万字，请拆分后上传`)
-          record = await run('create_record', { title: file.name, content: text, record_type: 'resource' }, { quiet: true })
+          record = await run('create_record', { title: file.name, content: text, record_type: 'resource', origin: 'topic' }, { quiet: true })
         } else {
           throw new Error(`${file.name}：只支持 md、txt、pdf`)
         }
@@ -64,6 +64,11 @@ export default function TopicMaterials({ topic, data, detail, run, reload }) {
     setUploading(false)
     await reload()
     setTimeout(reload, 4000)
+  }
+
+  async function removeUpload(record) {
+    if (!window.confirm(`删除资料「${record.title}」？原件一并删除，无法恢复。`)) return
+    if (await run('delete_record', { id: record.id })) await reload()
   }
 
   function toggleSource(recordId, enabled) {
@@ -129,10 +134,10 @@ export default function TopicMaterials({ topic, data, detail, run, reload }) {
         return (
           <section className="topic-record" key={record.id}>
             <div className="detail-title">
-              <a href={'#records/' + record.id}>{record.title} → 原文</a>
+              {record.origin === 'topic' ? <strong>{record.title}</strong> : <a href={'#records/' + record.id}>{record.title} → 原文</a>}
               <span className="topic-record-tools">
                 <label className="card-source-toggle"><input type="checkbox" checked={!excluded.has(record.id)} onChange={event => toggleSource(record.id, event.target.checked)} />用于卡片</label>
-                <Button onClick={() => linkRecord(record.id, true)}>取消关联</Button>
+                {record.origin === 'topic' ? <Button onClick={() => removeUpload(record)}>删除</Button> : <Button onClick={() => linkRecord(record.id, true)}>取消关联</Button>}
               </span>
             </div>
             {record.content.length > 600

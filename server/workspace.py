@@ -82,9 +82,26 @@ class WorkspaceMixin:
             "original_content": content, "record_type": record_type,
             "revision": 1, "created_by": "user", "task_id": None,
             "recall_policy": "normal", "idea_scope": "unknown",
+            **({"origin": "topic"} if p.get("origin") == "topic" else {}),
         })
         self.event("RecordCreated", "record", item["id"], details={"title": item["title"]})
         return item
+
+    @synchronized
+    def mark_topic_uploads(self):
+        """Once: files uploaded from a topic before ``origin`` existed become topic materials."""
+        settings = self.get("settings", "settings")
+        if not settings or settings.get("topic_uploads_marked"):
+            return 0
+        linked = {rid for topic in self.all("learning_topic") for rid in topic["record_ids"]}
+        marked = 0
+        for record in self.all("record"):
+            if (record["id"] in linked and record.get("record_type") == "resource" and not record.get("origin")
+                    and re.search(r"\.(pdf|md|markdown|txt)$", record["title"], re.I)):
+                self.put("record", {**record, "origin": "topic"})
+                marked += 1
+        self.put("settings", {**settings, "topic_uploads_marked": True})
+        return marked
 
     def import_obsidian_record(self, p):
         topic = self._existing("learning_topic", p)
@@ -161,7 +178,7 @@ class WorkspaceMixin:
                 self.put("idea_review", {**review, "items": items})
         self.delete("record", record["id"])
         self.event("RecordDeleted", "record", record["id"], details={"title": record["title"]})
-        return {"deleted": record["id"], "message": "记录已删除"}
+        return {"deleted": record["id"], "message": "资料已删除" if record.get("origin") == "topic" else "记录已删除"}
 
     def add_material(self, p):
         record = self._existing("record", {"id": p.get("record_id")})

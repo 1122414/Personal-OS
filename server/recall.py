@@ -127,7 +127,7 @@ class RecallMixin:
                 "instruction": "只按用户已确认且未过期的状态调整新建议：light 小段推进，rest 允许停止或只做极小一步；不要改动已确认计划。没有活动记录不代表缺乏动力。"}
 
     def _recall_allowed(self, record, now):
-        if record.get("record_type") == "status" or record.get("recall_policy") == "never":
+        if record.get("record_type") == "status" or record.get("recall_policy") == "never" or record.get("origin") == "topic":
             return False
         if record.get("defer_until") and instant(record["defer_until"]) > now:
             return False

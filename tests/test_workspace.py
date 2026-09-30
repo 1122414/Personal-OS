@@ -4,6 +4,7 @@ import base64
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,6 +34,31 @@ class WorkspaceTests(unittest.TestCase):
         self.store = Store(self.path)
         self.assertEqual(self.store.get("record", record["id"])["content"], content)
         self.assertEqual(self.store.get("record", record["id"])["created_at"], record["created_at"])
+
+    def test_topic_uploads_are_marked_and_old_ones_are_migrated_once(self):
+        topic = self.store.action("create_learning_topic", {"title": "秋招"})
+        upload = self.record("", title="简历.md", record_type="resource", origin="topic")
+        self.assertEqual(upload["origin"], "topic")
+        self.assertNotIn("origin", self.record("随手一条", origin="whatever"))
+        old = self.record("", title="旧简历.pdf", record_type="resource")
+        kept = self.record("", title="手动关联.pdf", record_type="resource")
+        note = self.record("笔记", title="讲义.md")
+        for item in (old, note):
+            self.store.action("link_record", {"id": topic["id"], "record_id": item["id"]})
+        settings = self.store.get("settings", "settings")
+        settings.pop("topic_uploads_marked")
+        self.store.put("settings", settings)
+        self.store.close()
+        self.store = Store(self.path)
+        self.assertEqual(self.store.get("record", old["id"]).get("origin"), "topic")
+        self.assertIsNone(self.store.get("record", kept["id"]).get("origin"))
+        self.assertIsNone(self.store.get("record", note["id"]).get("origin"))
+        self.store.action("link_record", {"id": topic["id"], "record_id": kept["id"]})
+        self.store.close()
+        self.store = Store(self.path)
+        self.assertIsNone(self.store.get("record", kept["id"]).get("origin"))
+        self.assertFalse(self.store._recall_allowed(self.store.get("record", old["id"]), datetime.now().astimezone()))
+        self.assertEqual(self.store.action("delete_record", {"id": old["id"]})["message"], "资料已删除")
 
     def test_delete_record_removes_attachments_and_unlinks_what_was_made_from_it(self):
         record, other = self.record(), self.record("另一条")
