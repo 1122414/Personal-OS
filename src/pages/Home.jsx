@@ -20,19 +20,29 @@ function Attention({ data, navigate }) {
   </div>
 }
 
+function ReportDigest({ index, today, navigate }) {
+  const modules = index.modules || []
+  const [folder, setFolder] = useState(null)
+  const module = modules.find(item => item.folder === folder) || modules[0]
+  const summary = (index.summaries || []).find(item => item.folder === module?.folder)
+  return <div className="report-digest">
+    <div className="digest-head"><span className="overline">日报{summary ? ` · ${summary.date === today ? '今天' : summary.date}` : ''}</span>
+      <div className="tabs compact">{modules.map(item => <button key={item.folder} className={item.folder === module?.folder ? 'active' : ''} onClick={() => setFolder(item.folder)}>{item.name}</button>)}</div></div>
+    {summary ? <>
+      <button className="strip-title" onClick={() => navigate('intelligence', summary.id)}>{summary.title}</button>
+      {summary.items.length > 0 && <ul className="digest-items">{summary.items.map((item, index) => <li key={index}>{item}</li>)}</ul>}
+      <button className="text-link" onClick={() => navigate('intelligence', summary.id)}>阅读全文 →</button>
+    </> : <span className="muted">尚未发现{module?.name}报告</span>}
+  </div>
+}
+
 function HomeStrip({ data, run, navigate }) {
   const [recall, setRecall] = useState(false)
   const index = data.daily_reports || { reports: [], modules: [], configured: false }
   const review = data.weekly_review?.items || []
   return <Panel className="home-strip">
-    {index.configured ? (index.modules || []).map(module => {
-      const items = index.reports.filter(item => item.folder === module.folder)
-      const latest = items.filter(item => item.date === items[0]?.date)
-      const label = `${module.name}${/^[A-Za-z]/.test(module.name) ? ' ' : ''}日报`
-      return <div className="strip-row" key={module.folder}><span className="overline">{label}{latest.length ? ` · ${latest[0].date === data.today ? '今天' : latest[0].date}` : ''}</span>
-        {latest.length ? <><button className="strip-title" onClick={() => navigate('intelligence', latest[0].id)}>{latest[0].title}</button>{latest.length > 1 && <button className="text-link" onClick={() => navigate('intelligence', latest[0].id)}>+{latest.length - 1} 篇</button>}</> : <span className="muted">尚未发现报告</span>}
-      </div>
-    }) : <div className="strip-row"><span className="overline">日报</span><span className="muted">尚未配置报告目录</span><button className="text-link" onClick={() => navigate('settings')}>检查来源 →</button></div>}
+    {index.configured ? <ReportDigest index={index} today={data.today} navigate={navigate} />
+      : <div className="strip-row"><span className="overline">日报</span><span className="muted">尚未配置报告目录</span><button className="text-link" onClick={() => navigate('settings')}>检查来源 →</button></div>}
     {review.length > 0 && <div className="strip-row"><span className="overline">回想</span><button className="strip-title" onClick={() => setRecall(true)}>本周想起 {review.length} 条点子 →</button></div>}
     {recall && <Modal title="本周，想起这些点子" onClose={() => setRecall(false)}>{review.map(item => <RecallCard key={item.record_id} item={item} record={item.record} topicTitle={item.topic_title} run={run} />)}</Modal>}
   </Panel>

@@ -8,7 +8,7 @@ from unittest.mock import patch
 from urllib.parse import quote
 
 from server.app import make_handler
-from server.reports import MAX_REPORT_BYTES, read_report, report_index
+from server.reports import MAX_REPORT_BYTES, read_report, report_index, report_summary
 from server.store import Store
 
 
@@ -112,6 +112,29 @@ class ReportTests(unittest.TestCase):
         handler.path = '/api/obsidian/report?module=' + quote('每日金融') + '&path=' + quote(f'{self.day}/金融日报.md')
         handler.do_GET()
         self.assertEqual((replies[-1][0], replies[-1][1]['module']), (200, '金融'))
+
+    def test_summary_is_taken_from_each_reports_own_summary_section(self):
+        samples = {
+            'heading': ('# 金融日报\n\n> 覆盖窗口：略\n\n## 今日三句话\n\n1. 第一句\n2. **第二句**\n\n## 一、宏观\n正文', ['第一句', '第二句']),
+            'callout': ('---\ntitle: 法律\n---\n\n# 法律日报\n\n> [!summary] 今日三句话\n> 1. **重磅**：条例\n> 2. [规定](https://x)\n\n---\n', ['重磅：条例', '规定']),
+            'lead': ('**AI HOT 日报**\n\n> 数据来源：略\n\n> **导语**：大事件\n>\n> 展开一段\n\n## 模型', ['大事件', '展开一段']),
+            'numbered': ('# 雷达\n\n## 一、执行摘要\n\n本期要点。\n\n## 二、详情', ['本期要点。']),
+            'fallback': ('**标题**\n\n| a | b |\n\n第一段正文 [[笔记|别名]]。\n\n第二段', ['第一段正文 别名。']),
+            'ignored mention': ('# 报告\n\n正文里提到摘要：不算\n\n## 摘要\n- 真正的摘要', ['真正的摘要']),
+        }
+        for name, (text, expected) in samples.items():
+            with self.subTest(name):
+                self.assertEqual(report_summary(text), expected)
+
+    def test_index_summarises_the_main_report_of_each_module(self):
+        (self.folder / 'MUA日报.md').write_text('# MUA\n\n## 今日结论\n- 不是主报告')
+        self.note.write_text('**AI HOT 日报**\n\n> **导语**：今天的导语\n')
+        (self.vault / '每日金融' / self.day).mkdir(parents=True)
+        (self.vault / '每日金融' / self.day / '金融日报.md').write_text('# 金融\n\n## 今日三句话\n1. 金融一句')
+        summaries = self.store.state()['daily_reports']['summaries']
+        self.assertEqual([(s['module'], s['items']) for s in summaries], [('AI', ['今天的导语']), ('金融', ['金融一句'])])
+        self.note.write_text('**AI HOT 日报**\n\n> **导语**：改过的导语，长度也变了\n')
+        self.assertEqual(self.store.state()['daily_reports']['summaries'][0]['items'], ['改过的导语，长度也变了'])
 
     def test_module_list_is_validated_and_replaces_defaults(self):
         self.store.action('save_settings', {'daily_reports_folder': '每日AI'})

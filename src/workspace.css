@@ -295,4 +295,4 @@
 .home-side>.home-items.collapsed{flex:none}
 .home-grid .home-items.collapsed .panel-heading{margin-bottom:0}
 .report-module-row{display:grid;grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr) auto;gap:8px;align-items:center;margin:8px 0}
-.home-strip .strip-row>.overline{min-width:8.5em}
+.report-digest{display:flex;flex-direction:column;gap:6px;min-width:0;font-size:13px}.digest-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.digest-head .tabs.compact{margin:0}.digest-head .tabs.compact button{padding:4px 10px}.report-digest .strip-title{flex:none;align-self:flex-start;max-width:100%;font-weight:700}.digest-items{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:5px;line-height:1.55;color:var(--ink)}.report-digest>.text-link{align-self:flex-end}

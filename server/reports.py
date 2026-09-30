@@ -14,6 +14,10 @@ DATE_FOLDER = re.compile(r"\d{4}-\d{2}-\d{2}")
 EXCLUDED = {"important!.md", "readme.md", "index.md"}
 DEFAULT_MODULES = (("AI", None), ("金融", "每日金融"), ("法律", "每日法律"))
 MAX_MODULES = 10
+SUMMARY_MARKERS = ("今日三句话", "导语", "执行摘要", "今日结论", "摘要")
+SUMMARY_ITEMS = 5
+SUMMARY_BYTES = 32_768
+_summaries: dict[str, tuple[str, list[str]]] = {}
 
 
 def folder_name(value: str) -> str:
@@ -124,9 +128,63 @@ def metadata(path: Path, relative: str, module: dict | None = None) -> dict:
             "version": f"{info.st_mtime_ns}:{info.st_size}", "bytes": info.st_size}
 
 
+def _plain(line: str) -> str:
+    line = re.sub(r"^(?:\s*>)+", "", line).strip()
+    line = re.sub(r"^(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.、)]\s*)", "", line)
+    line = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", line)
+    line = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", line)
+    return line.replace("**", "").strip()
+
+
+def report_summary(text: str) -> list[str]:
+    """The report's own summary section (heading, callout or bold label); otherwise its first paragraph."""
+    lines = re.sub(r"\A---\n.*?\n---\n", "", text.replace("\r\n", "\n"), flags=re.S).splitlines()
+    for marker in SUMMARY_MARKERS:
+        for i, line in enumerate(lines):
+            if not line.lstrip().startswith(("#", ">", "**")):
+                continue
+            bare = re.sub(r"^[>#\s]*(?:\[![\w-]+\][-+]?\s*)?(?:[一二三四五六七八九十]+、|\d+[.、]\s*)?", "", line).replace("**", "").strip()
+            if not bare.startswith(marker) or bare[len(marker):][:1] not in ("", "：", ":"):
+                continue
+            if line.lstrip().startswith("#"):
+                block = []
+                for following in lines[i + 1:]:
+                    if following.lstrip().startswith("#") or following.strip() == "---":
+                        break
+                    block.append(following)
+            elif line.lstrip().startswith(">"):
+                block = []
+                for following in lines[i + 1:]:
+                    if not following.lstrip().startswith(">"):
+                        break
+                    block.append(following)
+            else:
+                block = []
+                for following in lines[i + 1:]:
+                    if not following.strip():
+                        break
+                    block.append(following)
+            items = [item for item in [bare[len(marker):].lstrip("：: "), *map(_plain, block)] if item]
+            if items:
+                return [item[:300] for item in items[:SUMMARY_ITEMS]]
+    for line in lines:
+        if line.strip() and not line.lstrip().startswith(("#", ">", "|", "---", "!")) and not re.fullmatch(r"\*\*.*\*\*", line.strip()):
+            return [_plain(line)[:300]]
+    return []
+
+
+def module_summary(settings: dict, report: dict) -> dict:
+    cached = _summaries.get(report["id"])
+    if not cached or cached[0] != report["version"]:
+        path = safe_path(settings, report["path"], report["folder"])
+        cached = (report["version"], report_summary(read_text(path, SUMMARY_BYTES)))
+        _summaries[report["id"]] = cached
+    return {key: report[key] for key in ("id", "module", "folder", "date", "title")} | {"items": cached[1]}
+
+
 def report_index(settings: dict) -> dict:
     modules = report_modules(settings)
-    result = {"reports": [], "dates": [], "latest_date": None, "errors": [], "configured": False, "modules": modules}
+    result = {"reports": [], "dates": [], "latest_date": None, "errors": [], "configured": False, "modules": modules, "summaries": []}
     value = settings.get("obsidian_vault")
     if not value or not Path(value).is_dir():
         result["errors"].append("请先在设置中配置可读取的 Obsidian vault")
@@ -160,6 +218,14 @@ def report_index(settings: dict) -> dict:
     result["reports"].sort(key=lambda x: (x["date"], -order[x["folder"]]), reverse=True)
     result["dates"] = sorted({x["date"] for x in result["reports"]}, reverse=True)
     result["latest_date"] = next(iter(result["dates"]), None)
+    result["summaries"] = []
+    for module in modules:
+        main = next((x for x in result["reports"] if x["folder"] == module["folder"]), None)
+        if main:
+            try:
+                result["summaries"].append(module_summary(settings, main))
+            except (ValueError, OSError, UnicodeError):
+                result["summaries"].append({key: main[key] for key in ("id", "module", "folder", "date", "title")} | {"items": []})
     return result
 
 
