@@ -97,6 +97,7 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         self._run_transcripts: dict[str, list[dict[str, str]]] = {}
         self._flush_timers: dict[str, threading.Timer] = {}
         self._workers: dict[str, threading.Thread] = {}
+        self._card_jobs: set[str] = set()
         self._stopping = False
         self._active_jobs = 0
         self._sync_lock = threading.Lock()

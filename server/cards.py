@@ -163,34 +163,44 @@ class CardsMixin:
         engine = topic.get("card_engine") or "codex"
         count = topic.get("daily_count") or 3
         daily = bool(p.get("daily"))
+        with self.lock:
+            if topic["id"] in self._card_jobs:
+                raise ValueError("这个主题正在生成卡片，请等这一批完成")
+            if daily and (self.get("learning_topic", topic["id"]) or {}).get("last_push_date") == local_day():
+                return {"cards": [], "message": "今天已经推送过"}
+            self._card_jobs.add(topic["id"])
 
-        def finish(**fields: Any) -> dict[str, Any]:
+        def finish(pushed: bool, **fields: Any) -> dict[str, Any]:
             current = self.get("learning_topic", topic["id"])
-            if daily:
+            if pushed:
                 fields["last_push_date"] = local_day()
             return self.put("learning_topic", {**current, **fields}) if current else topic
 
         try:
-            cards = parse_cards(self._generate_text(engine, self._card_prompt(topic, count)), count)
-        except ValueError as exc:
+            try:
+                cards = parse_cards(self._generate_text(engine, self._card_prompt(topic, count)), count)
+            except ValueError as exc:
+                with self.lock:
+                    if not self._stopping:
+                        finish(daily, last_push_error=str(exc)[:400])
+                        self.event("LearningCardsFailed", "learning_topic", topic["id"], details={"error": str(exc)[:200]})
+                raise
+            label = RUNTIMES[engine].label
             with self.lock:
-                if not self._stopping:
-                    finish(last_push_error=str(exc)[:400])
-                    self.event("LearningCardsFailed", "learning_topic", topic["id"], details={"error": str(exc)[:200]})
-            raise
-        label = RUNTIMES[engine].label
-        with self.lock:
-            if self._stopping:
-                raise ValueError("服务正在关闭，生成结果未写入")
-            known = {_same_front(card["front"]) for card in self._topic_cards(topic["id"])}
-            saved = []
-            for card in cards:
-                if _same_front(card["front"]) not in known:
-                    known.add(_same_front(card["front"]))
-                    saved.append(self._new_card(topic, card["front"], card["back"], "ai", label))
-            finish(last_push_error=None)
-            self.event("LearningCardsGenerated", "learning_topic", topic["id"], details={"count": len(saved), "engine": label})
-            self._refresh_card_note(local_day())
+                if self._stopping:
+                    raise ValueError("服务正在关闭，生成结果未写入")
+                known = {_same_front(card["front"]) for card in self._topic_cards(topic["id"])}
+                saved = []
+                for card in cards:
+                    if _same_front(card["front"]) not in known:
+                        known.add(_same_front(card["front"]))
+                        saved.append(self._new_card(topic, card["front"], card["back"], "ai", label))
+                finish(True, last_push_error=None)
+                self.event("LearningCardsGenerated", "learning_topic", topic["id"], details={"count": len(saved), "engine": label})
+                self._refresh_card_note(local_day())
+        finally:
+            with self.lock:
+                self._card_jobs.discard(topic["id"])
         return {"cards": saved, "message": f"{label} 生成了 {len(saved)} 张卡片"}
 
     def daily_card_push(self) -> None:

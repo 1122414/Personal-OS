@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
@@ -94,6 +95,35 @@ class CardTests(unittest.TestCase):
         self.assertIn("出 3 张新卡片", prompt)
         self.assertFalse(workspace.exists())
         self.assertNotEqual(workspace, self.root)
+        self.assertEqual(self.store.get("learning_topic", self.topic["id"]).get("last_push_date"), local_day())
+
+    def test_manual_generation_blocks_concurrent_and_same_day_push(self):
+        started, release = threading.Event(), threading.Event()
+
+        class SlowRuntime(FakeRuntime):
+            def run(self, *args):
+                started.set()
+                release.wait(5)
+                return super().run(*args)
+
+        runtime = SlowRuntime('[{"front": "a", "back": "b"}]')
+        with self.fake(runtime):
+            self.store.action("set_card_push", {"id": self.topic["id"], "push_enabled": True})
+            worker = threading.Thread(target=self.store.action, args=("generate_cards", {"topic_id": self.topic["id"]}))
+            worker.start()
+            self.assertTrue(started.wait(5))
+            with self.assertRaisesRegex(ValueError, "正在生成"):
+                self.store.action("generate_cards", {"topic_id": self.topic["id"]})
+            self.store.daily_card_push()
+            release.set()
+            worker.join(5)
+            self.store.daily_card_push()
+        self.assertEqual(len(runtime.calls), 1)
+        self.assertEqual([c["front"] for c in self.store.all("learning_card")], ["a"])
+
+    def test_failed_manual_generation_leaves_daily_push_pending(self):
+        with self.fake(FakeRuntime(succeeded=False)), self.assertRaises(ValueError):
+            self.store.action("generate_cards", {"topic_id": self.topic["id"]})
         self.assertIsNone(self.store.get("learning_topic", self.topic["id"]).get("last_push_date"))
 
     def test_failed_daily_push_records_error_once_per_day(self):
