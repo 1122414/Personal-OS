@@ -337,7 +337,7 @@ def feed(runtime, workspace, text):
 
 
 class DirectRuntimeTests(unittest.TestCase):
-    """Kimi samples and the Claude Code error sample are real output recorded in /tmp trial runs."""
+    """Kimi samples, the Claude Code error sample and the Cursor sample are real output recorded in /tmp trial runs."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -375,6 +375,33 @@ class DirectRuntimeTests(unittest.TestCase):
         state, logs = feed(RUNTIMES["claude"], self.workspace, sample)
         self.assertEqual((state["result"], state["external_id"], state["outside_writes"]), ("完成", "s-2", [outside]))
         self.assertEqual(logs[1], "Edit /tmp/elsewhere.txt · Bash npm test")
+        self.assertNotIn("error", state)
+
+    def test_cursor_sample_yields_session_tools_and_last_message(self):
+        state, logs = feed(RUNTIMES["cursor"], "/tmp/pos-cursor/repo", (FIXTURES / "cursor-stream-success.jsonl").read_text())
+        self.assertEqual(state["external_id"], "d615f72a-223a-4618-b6e3-5f6f90ca64b4")
+        self.assertEqual(state["result"], "已在仓库根目录创建 `hello.txt`，内容为 `cursor ok`。`cat hello.txt` 的输出是 `cursor ok`，内容正确。")
+        self.assertEqual(logs[0], "已启动 · Auto Balance")
+        self.assertIn("edit /private/tmp/pos-cursor/repo/hello.txt", logs)
+        self.assertIn("shell cat hello.txt", logs)
+        self.assertNotIn("outside_writes", state)
+        self.assertEqual([entry["type"] for entry in state["transcript"]], ["text", "tool", "tool", "text"])
+
+    def test_cursor_stream_logs_tools_and_keeps_last_message_as_result(self):
+        # Hand-written from the documented cursor-agent stream-json shape.
+        outside = str(Path("/tmp/elsewhere.txt").resolve())
+        sample = lines(
+            {"type": "system", "subtype": "init", "session_id": "c-1", "model": "Auto"},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "先写文件"}]}, "session_id": "c-1"},
+            {"type": "tool_call", "subtype": "started", "tool_call": {"writeToolCall": {"args": {"path": "/tmp/elsewhere.txt"}}}},
+            {"type": "tool_call", "subtype": "completed", "tool_call": {"writeToolCall": {"args": {"path": "/tmp/elsewhere.txt"}}}},
+            {"type": "tool_call", "subtype": "started", "tool_call": {"function": {"name": "grep", "arguments": "{\"pattern\": \"TODO\"}"}}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "完成"}]}, "session_id": "c-1"},
+            {"type": "result", "subtype": "success", "is_error": False, "result": "先写文件完成", "session_id": "c-1"},
+        )
+        state, logs = feed(RUNTIMES["cursor"], self.workspace, sample)
+        self.assertEqual((state["result"], state["external_id"], state["outside_writes"]), ("完成", "c-1", [outside]))
+        self.assertEqual(logs, ["已启动 · Auto", "先写文件", "write /tmp/elsewhere.txt", "grep TODO", "完成"])
         self.assertNotIn("error", state)
 
 

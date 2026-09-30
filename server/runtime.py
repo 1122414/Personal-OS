@@ -250,6 +250,52 @@ class ClaudeRuntime(Runtime):
         return None
 
 
+class CursorRuntime(Runtime):
+    """cursor-agent -p stream-json: one line per complete message. --force lets it run shell commands; sandbox-exec keeps writes inside the workspace."""
+    id, label, binary = "cursor", "Cursor", "cursor-agent"
+    state_paths = [".cursor/"]
+    prompt_in_argv = True
+    resumable = True
+
+    def command(self, executable: str, workspace: Path, output: Path, prompt: str) -> list[str]:
+        return [executable, "-p", "--output-format", "stream-json", "--force", "--trust",
+                "--sandbox", "disabled", "--workspace", str(workspace), prompt]
+
+    def resume_args(self, session: str) -> list[str]:
+        return ["--resume", session]
+
+    def progress(self, line: str, state: dict[str, Any]) -> str | None:
+        event = _json(line)
+        if event is None:
+            return _brief(line) or None
+        kind, subtype = event.get("type"), event.get("subtype")
+        if event.get("session_id"):
+            state["external_id"] = event["session_id"]
+        if kind == "system" and subtype == "init":
+            return f"已启动 · {event.get('model') or '默认模型'}"
+        if kind == "assistant":
+            parts = []
+            for item in (event.get("message") or {}).get("content") or []:
+                if item.get("type") == "text" and item.get("text"):
+                    state["last_text"] = item["text"]
+                    say(state, item["text"])
+                    parts.append(_brief(item["text"]))
+            return " · ".join(parts) or None
+        if kind == "tool_call" and subtype == "started":
+            name, call = next(iter((event.get("tool_call") or {}).items()), ("工具", {}))
+            if name == "function":
+                name, arguments = call.get("name") or "工具", _json(call.get("arguments") or "") or {}
+            else:
+                name, arguments = name.removesuffix("ToolCall"), call.get("args") or {}
+            return tool(state, _tool_line(name, arguments, state))
+        if kind == "result":
+            # result concatenates every message without separators; the last message reads better.
+            state["result"] = state.get("last_text") or event.get("result") or ""
+            if event.get("is_error"):
+                state["error"] = event.get("result") or "Cursor 执行失败"
+        return None
+
+
 class MulticaHandle:
     """Stands in for a process: cancel asks the Multica server to stop; detach only stops polling."""
 
@@ -383,7 +429,7 @@ def _json(text: str) -> Any:
     return value if isinstance(value, dict) else None
 
 
-RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime(), KimiRuntime(), ClaudeRuntime(), MulticaRuntime())}
+RUNTIMES: dict[str, Runtime] = {runtime.id: runtime for runtime in (CodexRuntime(), KimiRuntime(), ClaudeRuntime(), CursorRuntime(), MulticaRuntime())}
 
 
 def execute(runtime: Runtime, executable: str, prompt: str, workspace: Path,
