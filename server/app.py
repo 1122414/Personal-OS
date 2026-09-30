@@ -230,6 +230,10 @@ def daily_automation(store: Store, stop: threading.Event) -> None:
                         except ValueError as exc:
                             store.event("ProjectPulseFailed", "project", project["id"], project["id"], {"error": str(exc)[:200]})
                 store.daily_card_push()
+            try:
+                store.daily_backup()
+            except sqlite3.Error as exc:
+                print(f"Daily backup: {exc}", flush=True)
             if hour >= 20 and not any(log["date"] == day for log in store.all("daily_log")):
                 store.action("draft_log", {})
         except (OSError, ValueError) as exc:

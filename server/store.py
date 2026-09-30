@@ -54,6 +54,7 @@ RUN_LOG_LINES = 40
 RUN_LOG_LINE_LIMIT = 300
 ASK_MARKER = "【需要你回复】"
 STATE_EVENTS = 200
+AUTO_BACKUPS = 7
 AGENT_RULE = f"完成后简要说明改了什么、怎么验证的。需要用户决定才能继续时直接提问，不要猜，并在回复最后单独一行写{ASK_MARKER}。"
 FOLLOW_UP_TAIL = "继续在同一工作目录内完成。" + AGENT_RULE
 
@@ -470,23 +471,37 @@ class Store(TodoMixin, CardsMixin, WorkspaceMixin, LearningMixin, LearningSummar
         destination.chmod(0o600)
         return {"path": str(destination), "message": "JSON 导出已保存到本机"}
 
-    def create_backup(self, p: dict[str, Any]) -> dict[str, Any]:
+    def _write_backup(self, suffix: str) -> Path:
         folder = self.path.parent / "backups"
         folder.mkdir(exist_ok=True)
         if folder.is_symlink():
             raise ValueError("备份目录不能是符号链接")
-        destination = folder / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{identifier()[:8]}.sqlite3"
+        destination = folder / f"backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{suffix}.sqlite3"
         with closing(sqlite3.connect(destination)) as target:
             self.db.backup(target)
             target.execute("PRAGMA journal_mode=DELETE")
         destination.chmod(0o600)
+        return destination
+
+    def create_backup(self, p: dict[str, Any]) -> dict[str, Any]:
+        destination = self._write_backup(identifier()[:8])
         return {"id": destination.name, "path": str(destination), "message": "本地备份已创建"}
+
+    @synchronized
+    def daily_backup(self) -> str | None:
+        """Once a day unless a backup was already made today; keeps the newest automatic copies, never deletes manual ones."""
+        if any(item["id"].startswith(f"backup-{datetime.now().strftime('%Y%m%d')}-") for item in self.backups()):
+            return None
+        created = self._write_backup("auto").name
+        for old in [item["id"] for item in self.backups() if item["id"].endswith("-auto.sqlite3")][AUTO_BACKUPS:]:
+            (self.path.parent / "backups" / old).unlink(missing_ok=True)
+        return created
 
     def restore_backup(self, p: dict[str, Any]) -> dict[str, Any]:
         if self._workers or self._active_jobs:
             raise ValueError("请等待执行、同步或 AI 生成结束后再恢复")
         name = p.get("id", "")
-        if not isinstance(name, str) or not re.fullmatch(r"backup-\d{8}-\d{6}-[a-f0-9]{8}\.sqlite3", name):
+        if not isinstance(name, str) or not re.fullmatch(r"backup-\d{8}-\d{6}-(?:[a-f0-9]{8}|auto)\.sqlite3", name):
             raise ValueError("备份名称无效")
         folder = self.path.parent / "backups"
         source = folder / name

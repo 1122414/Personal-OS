@@ -191,6 +191,29 @@ class RepairTests(unittest.TestCase):
         self.assertEqual(len(result["errors"]), 1)
         self.assertEqual(self.store.get("intelligence_channel", channel["id"])["last_refresh"]["errors"][0]["error"], "offline")
 
+    def test_daily_backup_runs_once_a_day_and_keeps_seven_automatic_copies(self):
+        folder = self.root / "backups"
+        folder.mkdir()
+        for day in range(1, 10):
+            (folder / f"backup-202601{day:02d}-030000-auto.sqlite3").write_bytes(b"old")
+        manual = folder / "backup-20260101-020000-0123abcd.sqlite3"
+        manual.write_bytes(b"manual")
+        created = self.store.daily_backup()
+        self.assertTrue(created.endswith("-auto.sqlite3"))
+        self.assertIsNone(self.store.daily_backup())
+        autos = sorted(path.name for path in folder.glob("*-auto.sqlite3"))
+        self.assertEqual(len(autos), 7)
+        self.assertIn(created, autos)
+        self.assertNotIn("backup-20260103-030000-auto.sqlite3", autos)
+        self.assertTrue(manual.exists())
+        later = self.store.action("create_todo", {"title": "备份之后"})
+        self.store.action("restore_backup", {"id": created})
+        self.assertIsNone(self.store.get("todo", later["id"]))
+        for path in folder.glob(f"backup-{date.today().strftime('%Y%m%d')}-*"):
+            path.unlink()
+        self.store.action("create_backup", {})
+        self.assertIsNone(self.store.daily_backup())
+
     def test_archive_reopen_and_backup_restore_preserve_recovery_copy(self):
         todo = self.store.action("create_todo", {"title": "keep", "today": True})
         self.store.action("archive_todo", {"id": todo["id"]})
