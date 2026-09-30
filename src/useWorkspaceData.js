@@ -43,14 +43,13 @@ export default function useWorkspaceData(onError) {
   }, [requests])
 
   useEffect(() => {
-    if (!hasRunningAgent) return
     const timer = setInterval(async () => {
       const runs = await requests.live().catch(() => null)
       if (!runs) return
       const merged = mergeRunningRuns(latest.current, runs)
       if (merged.stale) requests.refresh().catch(() => {})
-      else setData(merged.data)
-    }, 1500)
+      else if (runs.length) setData(merged.data)
+    }, hasRunningAgent ? 1500 : 5000)
     return () => clearInterval(timer)
   }, [requests, hasRunningAgent])
 
