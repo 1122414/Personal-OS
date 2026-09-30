@@ -1,13 +1,44 @@
+// Actions that call a model or a remote source and may run for minutes.
+export const BACKGROUND_JOBS = new Set(['refresh_channel', 'generate_brief', 'generate_project_pulse', 'summarize_log', 'sync_workbuddy', 'generate_cards', 'sync_traces'])
+
 // Read responses are snapshots. Mutations invalidate older reads; overlapping
-// mutations need one fresh snapshot after all writes settle.
+// mutations need one fresh snapshot after all writes settle. Background jobs do
+// not hold back other saves or polls; their result arrives through a fresh read.
 export function createWorkspaceRequests({ load, action, onData, onPending, loadRunning }) {
   let active = true
   let version = 0
   let overlapping = false
   const writes = new Map()
+  const jobs = new Map()
 
   function publishPending() {
-    if (active) onPending([...writes.values()].at(-1) || null)
+    if (active) onPending([...writes.values()].at(-1) || [...jobs.values()].at(-1) || null)
+  }
+
+  async function runJob(name, payload) {
+    const id = ++version
+    jobs.set(id, name)
+    publishPending()
+    let response, failure, refreshError
+    try {
+      response = await action(name, payload)
+    } catch (error) {
+      failure = error
+    } finally {
+      jobs.delete(id)
+      version += 1
+      publishPending()
+      if (writes.size) overlapping = true
+      else {
+        try {
+          await refresh()
+        } catch (error) {
+          refreshError = error
+        }
+      }
+    }
+    if (failure) throw failure
+    return { ...response, refreshError }
   }
 
   async function refresh() {
@@ -34,6 +65,7 @@ export function createWorkspaceRequests({ load, action, onData, onPending, loadR
 
   async function mutate(name, payload) {
     if (!active) throw new Error('工作空间已关闭，请重新打开后操作')
+    if (BACKGROUND_JOBS.has(name)) return runJob(name, payload)
     const id = ++version
     writes.set(id, name)
     if (writes.size > 1) overlapping = true

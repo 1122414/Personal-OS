@@ -150,3 +150,40 @@ test('a new write invalidates the reconciliation read of an earlier batch', asyn
   await second
   assert.deepEqual(h.values, ['third-saved'])
 })
+
+test('a long job does not hold back other saves or polls, and ends with a fresh read', async () => {
+  const h = harness()
+  const job = h.requests.mutate('summarize_log', { engine: 'codex' })
+  assert.deepEqual(h.pending, ['summarize_log'])
+  const save = h.requests.mutate('create_task', { title: '新任务' })
+  h.writes[1].resolve(response('with-task'))
+  await save
+  assert.deepEqual(h.values, ['with-task'])
+  const poll = h.requests.refresh()
+  h.reads[0].resolve('polled-during-job')
+  await poll
+  assert.deepEqual(h.values, ['with-task', 'polled-during-job'])
+  h.writes[0].resolve(response('job-snapshot', { message: '已生成' }))
+  await Promise.resolve()
+  h.reads[1].resolve('after-job')
+  const result = await job
+  assert.equal(result.result.message, '已生成')
+  assert.deepEqual(h.values, ['with-task', 'polled-during-job', 'after-job'])
+  assert.equal(h.pending.at(-1), null)
+})
+
+test('a job finishing during a save discards the save snapshot and older reads', async () => {
+  const h = harness()
+  const job = h.requests.mutate('generate_cards', {})
+  const oldPoll = h.requests.refresh()
+  const save = h.requests.mutate('create_todo', {})
+  h.writes[0].resolve(response('cards'))
+  await job
+  h.writes[1].resolve(response('todo-without-cards'))
+  await Promise.resolve()
+  h.reads[1].resolve('todo-and-cards')
+  await save
+  h.reads[0].resolve('stale-poll')
+  await oldPoll
+  assert.deepEqual(h.values, ['todo-and-cards'])
+})
